@@ -1672,8 +1672,15 @@ describe("t244 Windows and completion release surfaces", () => {
       '--project-dir "$project" --harness claude --mcp none --quiet',
     );
     expect(promote).toContain('"$command" doctor');
-    expect(promote).not.toContain("AIDLC_RELEASE_REPOSITORY");
-    expect(promote).not.toContain("AIDLC_RELEASE_WORKFLOW");
+    // Repo-relative trust roots: identical to the installer defaults on the
+    // canonical repository, and the only shape that lets a fork shakedown
+    // verify its own attestations (round-6 evidence). A literal repository
+    // name must never appear.
+    expect(promote).toContain('AIDLC_RELEASE_REPOSITORY="$GH_REPO"');
+    expect(promote).toContain(
+      'AIDLC_RELEASE_WORKFLOW="$GH_REPO/.github/workflows/release.yml"',
+    );
+    expect(promote).not.toContain('AIDLC_RELEASE_REPOSITORY="awslabs');
   });
 
   test("release MUST 5: gated promote always verifies and conditions only the public flip", () => {

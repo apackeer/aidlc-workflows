@@ -421,10 +421,16 @@ jobs:
           install_root="$RUNNER_TEMP/aidlc-online"
           bin_dir="$RUNNER_TEMP/aidlc-online-bin"
           gh_bin="$(command -v gh)"
+          # Repo-relative trust roots: on awslabs these equal the installer's
+          # built-in defaults byte-for-byte; on a fork shakedown they make the
+          # rehearsal verify the fork's own attestations instead of failing
+          # closed against upstream (proven necessary by shakedown round 6).
           env PATH="/usr/bin:/bin" \
             AIDLC_INSTALL_ROOT="$install_root" \
             AIDLC_BIN_DIR="$bin_dir" \
             AIDLC_GH_BIN="$gh_bin" \
+            AIDLC_RELEASE_REPOSITORY="$GH_REPO" \
+            AIDLC_RELEASE_WORKFLOW="$GH_REPO/.github/workflows/release.yml" \
             sh "$release/install.sh" \
             --release-base-url "http://127.0.0.1:$port" \
             --quiet
