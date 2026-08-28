@@ -1279,11 +1279,18 @@ describe("t244 Windows and completion release surfaces", () => {
     expect(syntax.status, syntax.stderr).toBe(0);
     if (process.platform !== "win32") {
       const zsh = run(DISPATCHER, ["system", "completions", "zsh"], REPO_ROOT);
-      const zshSyntax = spawnSync("zsh", ["-n"], {
-        input: zsh.stdout,
-        encoding: "utf-8",
-      });
-      expect(zshSyntax.status, zshSyntax.stderr).toBe(0);
+      // Syntax-check with a real zsh only where one exists: GitHub's
+      // ubuntu-latest image dropped zsh (observed 2026-08-28 on the fork
+      // release shakedown), so this validation is best-effort while the
+      // generation contract above stays asserted everywhere.
+      const zshBin = Bun.which("zsh");
+      if (zshBin) {
+        const zshSyntax = spawnSync(zshBin, ["-n"], {
+          input: zsh.stdout,
+          encoding: "utf-8",
+        });
+        expect(zshSyntax.status, zshSyntax.stderr).toBe(0);
+      }
     }
     expect(run(DISPATCHER, ["completions", "bash"], REPO_ROOT).status).toBe(2);
   });
