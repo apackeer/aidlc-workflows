@@ -247,7 +247,7 @@ describe("t-exec-codex-compose-front - interactive compose over exec + exec resu
         // instead of the proposal gate, answer "compose" in-session; the
         // next turn must land on the gate. Still: nothing written yet.
         let gateOut = b1.stdout;
-        if (!/approve/i.test(gateOut)) {
+        if (!/approv/i.test(gateOut)) {
           expect(gateOut).toMatch(/compose/i);
           const offerTurn = codexTurn(proj, home, "compose", { resume: true });
           expect(offerTurn.rc).toBe(0);
@@ -255,7 +255,7 @@ describe("t-exec-codex-compose-front - interactive compose over exec + exec resu
           gateOut = offerTurn.stdout;
         }
         // The approve/edit/reject gate reached the final message.
-        expect(gateOut).toMatch(/approve/i);
+        expect(gateOut).toMatch(/approv/i);
         expect(gateOut).toMatch(/reject/i);
         // Nothing written before approval: no state file, no intent record.
         expect(intentRecords(proj)).toEqual([]);
