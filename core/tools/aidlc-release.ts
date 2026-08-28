@@ -46,8 +46,16 @@ const MAX_ASSET_BYTES = 1024 * 1024 * 1024;
 const MAX_METADATA_BYTES = 1024 * 1024;
 const PROGRESS_WIDTH = 72;
 const PROVENANCE_BUNDLE = "aidlc-release.intoto.jsonl";
-const RELEASE_REPOSITORY = "awslabs/aidlc-workflows";
-const RELEASE_WORKFLOW = "awslabs/aidlc-workflows/.github/workflows/release.yml";
+const DEFAULT_RELEASE_REPOSITORY = "awslabs/aidlc-workflows";
+
+function releaseTrust(): { repository: string; workflow: string } {
+  const repository =
+    process.env.AIDLC_RELEASE_REPOSITORY ?? DEFAULT_RELEASE_REPOSITORY;
+  const workflow =
+    process.env.AIDLC_RELEASE_WORKFLOW ??
+    `${repository}/.github/workflows/release.yml`;
+  return { repository, workflow };
+}
 
 function progress(url: string, complete: boolean): void {
   if (process.env.AIDLC_ROUTE_OUTPUT_MODE !== "human") return;
@@ -112,6 +120,7 @@ function verifyReleaseProvenance(
   if (!existsSync(bundle)) {
     throw new Error(`release is missing ${PROVENANCE_BUNDLE}`);
   }
+  const trust = releaseTrust();
   const result = Bun.spawnSync([
     "gh",
     "attestation",
@@ -120,9 +129,9 @@ function verifyReleaseProvenance(
     "--bundle",
     bundle,
     "--repo",
-    RELEASE_REPOSITORY,
+    trust.repository,
     "--signer-workflow",
-    RELEASE_WORKFLOW,
+    trust.workflow,
     "--source-ref",
     `refs/tags/v${version}`,
   ], {
@@ -383,7 +392,7 @@ async function download(
     if (!response) throw new ReleaseUnavailableError(`${redact(url)} returned no response`);
     if (response.status === 404) {
       throw new ReleaseUnavailableError(
-        "No published native release is available yet. Use the copy channel from the aidlc-workflows checkout, or pass --from <release-directory>.",
+        "No published native release is available yet. Pass --from <release-directory>, or run bun scripts/package.ts in an aidlc-workflows source checkout to materialize the development copy channel.",
       );
     }
     if (!response.ok) {

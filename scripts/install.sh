@@ -2,6 +2,9 @@
 set -eu
 
 BASE_URL=${AIDLC_RELEASE_BASE_URL:-https://github.com/awslabs/aidlc-workflows/releases}
+RELEASE_REPOSITORY=${AIDLC_RELEASE_REPOSITORY:-awslabs/aidlc-workflows}
+RELEASE_WORKFLOW=${AIDLC_RELEASE_WORKFLOW:-$RELEASE_REPOSITORY/.github/workflows/release.yml}
+GH_BIN=${AIDLC_GH_BIN:-}
 VERSION=
 FROM=
 OFFLINE=0
@@ -333,17 +336,21 @@ candidate_version=$VERSION
   candidate_version=$(sed -n 's/.*"version":[[:space:]]*"\([0-9][0-9.]*\)".*/\1/p' "$TMP/version.json" | head -n 1)
 [ -n "$candidate_version" ] || fail 4 failed "version.json has no valid version."
 if [ -z "$FROM" ]; then
-  command -v gh >/dev/null 2>&1 ||
+  if [ -z "$GH_BIN" ]; then
+    GH_BIN=$(command -v gh 2>/dev/null || true)
+  fi
+  if [ -z "$GH_BIN" ] || [ ! -x "$GH_BIN" ]; then
     fail 1 failed "GitHub CLI is required to verify release provenance" \
       "install gh, then rerun this installer"
-  gh attestation verify "$TMP/checksums.txt" \
+  fi
+  "$GH_BIN" attestation verify "$TMP/checksums.txt" \
     --bundle "$TMP/aidlc-release.intoto.jsonl" \
-    --repo awslabs/aidlc-workflows \
-    --signer-workflow awslabs/aidlc-workflows/.github/workflows/release.yml \
+    --repo "$RELEASE_REPOSITORY" \
+    --signer-workflow "$RELEASE_WORKFLOW" \
     --source-ref "refs/tags/v$candidate_version" \
     >/dev/null 2>"$TMP/provenance.err" ||
     fail 4 failed "release provenance verification failed" \
-      "obtain the release from awslabs/aidlc-workflows"
+      "obtain the release from $RELEASE_REPOSITORY"
 fi
 
 expected_manifest=$(sed -n 's/^\([a-f0-9]\{64\}\)  version\.json$/\1/p' "$TMP/checksums.txt")

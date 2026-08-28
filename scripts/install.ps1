@@ -38,6 +38,16 @@ param(
 
 $ErrorActionPreference = 'Stop'
 $ProgressPreference = 'SilentlyContinue'
+$releaseRepository = if ($env:AIDLC_RELEASE_REPOSITORY) {
+  $env:AIDLC_RELEASE_REPOSITORY
+} else {
+  'awslabs/aidlc-workflows'
+}
+$releaseWorkflow = if ($env:AIDLC_RELEASE_WORKFLOW) {
+  $env:AIDLC_RELEASE_WORKFLOW
+} else {
+  "$releaseRepository/.github/workflows/release.yml"
+}
 
 function Write-Result {
   param(
@@ -229,11 +239,11 @@ try {
     $bundle = Join-Path $temporary 'aidlc-release.intoto.jsonl'
     & $gh.Source attestation verify $checksumsPath `
       --bundle $bundle `
-      --repo awslabs/aidlc-workflows `
-      --signer-workflow awslabs/aidlc-workflows/.github/workflows/release.yml `
+      --repo $releaseRepository `
+      --signer-workflow $releaseWorkflow `
       --source-ref "refs/tags/v$($manifest.version)" | Out-Null
     if ($LASTEXITCODE -ne 0) {
-      Stop-Install 4 'failed' 'release provenance verification failed' 'obtain the release from awslabs/aidlc-workflows'
+      Stop-Install 4 'failed' 'release provenance verification failed' "obtain the release from $releaseRepository"
     }
   }
   $manifestHash = (Get-FileHash -Algorithm SHA256 -LiteralPath $manifestPath).Hash.ToLowerInvariant()

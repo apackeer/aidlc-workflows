@@ -10,7 +10,7 @@ on:
         type: string
         required: true
       draft:
-        description: Publish as a draft release
+        description: Leave the verified release as a draft for manual promotion
         type: boolean
         default: true
 
@@ -171,6 +171,8 @@ jobs:
   stage-release:
     needs: build
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
@@ -184,7 +186,11 @@ jobs:
           pattern: binary-*
           path: build/binaries
           merge-multiple: true
+      - run: bun scripts/package.ts
       - run: bun scripts/package-release.ts --require-release-matrix
+      - name: Re-verify staged release checksums
+        working-directory: build/release
+        run: sha256sum -c checksums.txt
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: release-candidate
@@ -205,43 +211,21 @@ jobs:
           $env:AIDLC_BIN_DIR = Join-Path $env:AIDLC_INSTALL_ROOT 'bin'
           $env:AIDLC_ALLOW_ADMIN_INSTALL = '1'
           $releaseRoot = (Resolve-Path ./build/release).Path
-          $probe = [Net.Sockets.TcpListener]::new([Net.IPAddress]::Loopback, 0)
-          $probe.Start()
-          $port = ([Net.IPEndPoint]$probe.LocalEndpoint).Port
-          $probe.Stop()
-          $server = Start-Job -ArgumentList $releaseRoot, $port -ScriptBlock {
-            param($Root, $Port)
-            $listener = [Net.HttpListener]::new()
-            $listener.Prefixes.Add("http://localhost:$Port/")
-            $listener.Start()
-            try {
-              while ($listener.IsListening) {
-                $context = $listener.GetContext()
-                $name = [IO.Path]::GetFileName($context.Request.Url.AbsolutePath)
-                $path = Join-Path $Root $name
-                if (-not (Test-Path -LiteralPath $path -PathType Leaf)) {
-                  $context.Response.StatusCode = 404
-                  $context.Response.Close()
-                  continue
-                }
-                $bytes = [IO.File]::ReadAllBytes($path)
-                $context.Response.StatusCode = 200
-                $context.Response.ContentLength64 = $bytes.Length
-                $context.Response.OutputStream.Write($bytes, 0, $bytes.Length)
-                $context.Response.Close()
-              }
-            } finally {
-              $listener.Close()
+          Get-Content (Join-Path $releaseRoot 'checksums.txt') | ForEach-Object {
+            if ($_ -notmatch '^([a-f0-9]{64})  ([A-Za-z0-9][A-Za-z0-9._-]*)$') {
+              throw "malformed checksum row: $_"
+            }
+            $path = Join-Path $releaseRoot $Matches[2]
+            if (-not (Test-Path -LiteralPath $path -PathType Leaf)) {
+              throw "checksummed asset is missing: $($Matches[2])"
+            }
+            $actual = (Get-FileHash -Algorithm SHA256 -LiteralPath $path).Hash.ToLowerInvariant()
+            if ($actual -ne $Matches[1]) {
+              throw "checksum mismatch: $($Matches[2])"
             }
           }
-          Start-Sleep -Milliseconds 500
-          try {
-            & ./build/release/install.ps1 -ReleaseBaseUrl "http://localhost:$port" -Quiet
-            if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-          } finally {
-            Stop-Job $server -ErrorAction SilentlyContinue
-            Remove-Job $server -Force -ErrorAction SilentlyContinue
-          }
+          & ./build/release/install.ps1 -From $releaseRoot -Offline -Quiet
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           $command = Join-Path $env:AIDLC_BIN_DIR 'aidlc.cmd'
           & $command version
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
@@ -270,46 +254,33 @@ jobs:
         with:
           name: release-candidate
           path: build/release
-      - name: Consume the release candidate online and offline
+      - name: Consume the checksummed release candidate
         shell: bash
         run: |
           set -euo pipefail
           release="$PWD/build/release"
-          server_root="$RUNNER_TEMP/aidlc-release-server"
-          mkdir -p "$server_root/latest/download"
-          cp -R "$release/." "$server_root/latest/download/"
-          python3 -m http.server 18765 --bind 127.0.0.1 --directory "$server_root" \
-            >"$RUNNER_TEMP/aidlc-release-server.log" 2>&1 &
-          server_pid=$!
-          trap 'kill "$server_pid" 2>/dev/null || true' EXIT
-          for _ in {1..50}; do
-            curl -fsS "http://127.0.0.1:18765/latest/download/version.json" >/dev/null && break
-            sleep 0.1
-          done
-
-          export AIDLC_INSTALL_ROOT="$RUNNER_TEMP/aidlc-online"
-          export AIDLC_BIN_DIR="$RUNNER_TEMP/aidlc-online-bin"
-          sh "$release/install.sh" \
-            --release-base-url "http://127.0.0.1:18765" \
-            --quiet
-          online="$AIDLC_BIN_DIR/aidlc"
-          env PATH="/usr/bin:/bin" "$online" version
-          online_project="$RUNNER_TEMP/aidlc-online-project"
-          mkdir -p "$online_project"
-          env PATH="/usr/bin:/bin" "$online" config \
-            --project-dir "$online_project" --harness claude --mcp none --quiet
-          env PATH="/usr/bin:/bin" "$online" doctor \
-            --project-dir "$online_project" --quiet
-
-          export AIDLC_INSTALL_ROOT="$RUNNER_TEMP/aidlc-offline"
-          export AIDLC_BIN_DIR="$RUNNER_TEMP/aidlc-offline-bin"
-          sh "$release/install.sh" --from "$release" --offline --quiet
-          offline="$AIDLC_BIN_DIR/aidlc"
-          env PATH="/usr/bin:/bin" "$offline" version
-          offline_project="$RUNNER_TEMP/aidlc-offline-project"
-          mkdir -p "$offline_project"
-          env PATH="/usr/bin:/bin" "$offline" config \
-            --project-dir "$offline_project" --harness opencode --mcp none --quiet
+          if command -v sha256sum >/dev/null 2>&1; then
+            (cd "$release" && sha256sum -c checksums.txt)
+          else
+            (cd "$release" && shasum -a 256 -c checksums.txt)
+          fi
+          export AIDLC_INSTALL_ROOT="$RUNNER_TEMP/aidlc-machine"
+          export AIDLC_BIN_DIR="$RUNNER_TEMP/aidlc-bin"
+          env PATH="/usr/bin:/bin" \
+            AIDLC_INSTALL_ROOT="$AIDLC_INSTALL_ROOT" \
+            AIDLC_BIN_DIR="$AIDLC_BIN_DIR" \
+            sh "$release/install.sh" --from "$release" --offline --quiet
+          command="$AIDLC_BIN_DIR/aidlc"
+          env PATH="/usr/bin:/bin" "$command" version
+          claude_project="$RUNNER_TEMP/aidlc-claude-project"
+          opencode_project="$RUNNER_TEMP/aidlc-opencode-project"
+          mkdir -p "$claude_project" "$opencode_project"
+          env PATH="/usr/bin:/bin" "$command" config \
+            --project-dir "$claude_project" --harness claude --mcp none --quiet
+          env PATH="/usr/bin:/bin" "$command" doctor \
+            --project-dir "$claude_project" --quiet
+          env PATH="/usr/bin:/bin" "$command" config \
+            --project-dir "$opencode_project" --harness opencode --mcp none --quiet
 
   publish:
     needs: [authorize, musl-smoke, windows-lifecycle, unix-lifecycle]
@@ -338,8 +309,6 @@ jobs:
       - name: Re-verify staged release checksums
         working-directory: build/release
         run: sha256sum -c checksums.txt
-      # version.json and checksums.txt are staged before attestation. The
-      # exported bundle is a separate trust channel and is not listed in either.
       - name: Attest staged release assets
         id: provenance
         uses: actions/attest-build-provenance@e8998f949152b193b063cb0ec769d69d929409be # v2
@@ -351,7 +320,126 @@ jobs:
           cp "$ATTESTATION_BUNDLE" build/release/aidlc-release.intoto.jsonl
         env:
           ATTESTATION_BUNDLE: ${{ steps.provenance.outputs.bundle-path }}
-      - run: gh release create "$RELEASE_TAG" build/release/* --verify-tag --generate-notes ${{ inputs.draft && '--draft' || '' }}
+      - name: Create draft release
+        run: gh release create "$RELEASE_TAG" build/release/* --verify-tag --generate-notes --draft
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          RELEASE_TAG: ${{ github.event_name == 'workflow_dispatch' && inputs.tag || github.ref_name }}
+
+  verify-release:
+    needs: publish
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2
+        with:
+          bun-version: 1.3.14
+      - name: Verify draft release assets and provenance
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          RELEASE_TAG: ${{ github.event_name == 'workflow_dispatch' && inputs.tag || github.ref_name }}
+        run: |
+          set -euo pipefail
+          release="$RUNNER_TEMP/aidlc-draft-release"
+          mkdir -p "$release"
+          test "$(gh release view "$RELEASE_TAG" --json isDraft --jq .isDraft)" = "true"
+          gh release download "$RELEASE_TAG" --dir "$release"
+          cd "$release"
+          sha256sum -c checksums.txt
+          test "$RELEASE_TAG" = "v$(jq -r .version version.json)"
+          test -f aidlc-release.intoto.jsonl
+          mapfile -t attested_assets < <(
+            jq -r '.assets[] | select(.kind == "binary" or .kind == "runtime") | .name' version.json
+          )
+          test "${#attested_assets[@]}" -ge 2
+          for asset in "${attested_assets[@]}"; do
+            gh attestation verify "$asset" \
+              --repo "$GH_REPO" \
+              --signer-workflow "$GH_REPO/.github/workflows/release.yml" \
+              --source-ref "refs/tags/$RELEASE_TAG"
+            gh attestation verify "$asset" \
+              --bundle aidlc-release.intoto.jsonl \
+              --repo "$GH_REPO" \
+              --signer-workflow "$GH_REPO/.github/workflows/release.yml" \
+              --source-ref "refs/tags/$RELEASE_TAG"
+          done
+
+          server_root="$RUNNER_TEMP/aidlc-draft-server"
+          port_file="$RUNNER_TEMP/aidlc-draft-server.port"
+          mkdir -p "$server_root/latest/download"
+          cp -R "$release/." "$server_root/latest/download/"
+          # Bun 1.4 can replace this with a static { dir } route. On the pinned
+          # Bun 1.3.14 that shape selects the framework dev server and fails.
+          bun -e '
+            import { join } from "node:path";
+            const root = process.argv[1];
+            const portFile = process.argv[2];
+            const server = Bun.serve({
+              hostname: "127.0.0.1",
+              port: 0,
+              async fetch(request) {
+                const parts = new URL(request.url).pathname
+                  .split("/")
+                  .filter(Boolean)
+                  .map(decodeURIComponent);
+                if (parts.some((part) => part === "." || part === "..")) {
+                  return new Response("bad path", { status: 400 });
+                }
+                const file = Bun.file(join(root, ...parts));
+                return await file.exists()
+                  ? new Response(file)
+                  : new Response("not found", { status: 404 });
+              },
+            });
+            await Bun.write(portFile, `${server.port}\n`);
+          ' "$server_root" "$port_file" \
+            >"$RUNNER_TEMP/aidlc-draft-server.log" 2>&1 &
+          server_pid=$!
+          trap 'kill "$server_pid" 2>/dev/null || true' EXIT
+          for _ in {1..50}; do
+            test -s "$port_file" && break
+            sleep 0.1
+          done
+          test -s "$port_file"
+          port="$(cat "$port_file")"
+          for _ in {1..50}; do
+            curl -fsS "http://127.0.0.1:$port/latest/download/version.json" >/dev/null && break
+            sleep 0.1
+          done
+
+          install_root="$RUNNER_TEMP/aidlc-online"
+          bin_dir="$RUNNER_TEMP/aidlc-online-bin"
+          gh_bin="$(command -v gh)"
+          env PATH="/usr/bin:/bin" \
+            AIDLC_INSTALL_ROOT="$install_root" \
+            AIDLC_BIN_DIR="$bin_dir" \
+            AIDLC_GH_BIN="$gh_bin" \
+            sh "$release/install.sh" \
+            --release-base-url "http://127.0.0.1:$port" \
+            --quiet
+          command="$bin_dir/aidlc"
+          env PATH="/usr/bin:/bin" "$command" version
+          project="$RUNNER_TEMP/aidlc-online-project"
+          mkdir -p "$project"
+          env PATH="/usr/bin:/bin" "$command" config \
+            --project-dir "$project" --harness claude --mcp none --quiet
+          env PATH="/usr/bin:/bin" "$command" doctor \
+            --project-dir "$project" --quiet
+
+  promote:
+    needs: verify-release
+    if: github.event_name != 'workflow_dispatch' || inputs.draft == false
+    runs-on: ubuntu-latest
+    environment: release
+    permissions:
+      contents: write
+    steps:
+      - name: Promote verified draft release
+        run: gh release edit "$RELEASE_TAG" --draft=false
         env:
           GH_TOKEN: ${{ github.token }}
           GH_REPO: ${{ github.repository }}

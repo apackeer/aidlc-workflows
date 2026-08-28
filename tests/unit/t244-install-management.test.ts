@@ -51,6 +51,7 @@ const INIT = join(REPO_ROOT, "core", "tools", "aidlc-init.ts");
 const LIFECYCLE = join(REPO_ROOT, "core", "tools", "aidlc-lifecycle.ts");
 const INSTALL_SH = join(REPO_ROOT, "scripts", "install.sh");
 const INSTALL_PS1 = join(REPO_ROOT, "scripts", "install.ps1");
+const RELEASE_WORKFLOW = join(REPO_ROOT, ".github", "workflows", "release.yml");
 const temporary: string[] = [];
 const originalPath = process.env.PATH;
 
@@ -78,6 +79,14 @@ function temp(prefix: string): string {
   const path = mkdtempSync(join(tmpdir(), prefix));
   temporary.push(path);
   return path;
+}
+
+function workflowJob(workflow: string, name: string): string {
+  const match = new RegExp(
+    `\\n  ${name}:\\n[\\s\\S]*?(?=\\n  [a-z][a-z0-9-]*:\\n|$)`,
+  ).exec(workflow);
+  if (!match) throw new Error(`release workflow has no ${name} job`);
+  return match[0];
 }
 
 function run(
@@ -1293,6 +1302,8 @@ describe("t244 Windows and completion release surfaces", () => {
     expect(script).toContain("attestation verify");
     expect(script).toContain("aidlc-release.intoto.jsonl");
     expect(script).toContain("--signer-workflow");
+    expect(script).toContain("$env:AIDLC_RELEASE_REPOSITORY");
+    expect(script).toContain("$env:AIDLC_RELEASE_WORKFLOW");
     expect(script).toContain("$env:Path = \"$binDir;$env:Path\"");
     expect(script).toContain("exceeds the 1 MiB metadata limit");
     const release = fixture(AIDLC_VERSION, { binary: "bytes" });
@@ -1304,25 +1315,20 @@ describe("t244 Windows and completion release surfaces", () => {
     );
   }, process.platform === "win32" ? 30_000 : 5_000);
 
-  test("release workflow lints installers and publishes the tested candidate", () => {
-    const workflow = readFileSync(
-      join(REPO_ROOT, ".github", "workflows", "release.yml"),
-      "utf-8",
-    );
+  test("Unix installer supports explicit provenance trust roots under a stripped PATH", () => {
+    const script = readFileSync(INSTALL_SH, "utf-8");
+    expect(script).toContain("AIDLC_RELEASE_REPOSITORY");
+    expect(script).toContain("AIDLC_RELEASE_WORKFLOW");
+    expect(script).toContain("AIDLC_GH_BIN");
+    expect(script).toContain('"$GH_BIN" attestation verify');
+  });
+
+  test("release workflow keeps actions pinned, lints installers, and regenerates before consumers", () => {
+    const workflow = readFileSync(RELEASE_WORKFLOW, "utf-8");
     const parsed = Bun.YAML.parse(workflow) as {
       permissions?: Record<string, string>;
-      jobs?: Record<string, {
-        permissions?: Record<string, string>;
-        environment?: string;
-      }>;
     };
     expect(parsed.permissions).toEqual({ contents: "read" });
-    expect(parsed.jobs?.publish?.permissions).toEqual({
-      contents: "write",
-      "id-token": "write",
-      attestations: "write",
-    });
-    expect(parsed.jobs?.publish?.environment).toBe("release");
     expect(workflow).toContain("name: Authorize immutable release tag");
     expect(workflow).toContain("git merge-base --is-ancestor");
     expect(workflow).toContain(
@@ -1341,31 +1347,17 @@ describe("t244 Windows and completion release surfaces", () => {
     expect(workflow).toContain("Invoke-ScriptAnalyzer -Path scripts/install.ps1");
     expect(workflow).toContain("unix-lifecycle:");
     expect(workflow).not.toContain("interactive harness picker");
-    expect(workflow).toContain("install.ps1 -ReleaseBaseUrl");
     expect(workflow).not.toMatch(/install\.(?:sh|ps1)[^\n]*--harness/);
     expect(workflow).not.toMatch(/install\.ps1[^\n]*-Harness/);
     expect(workflow).toContain("name: release-candidate");
     expect(workflow).toContain(`build-results-\${{ matrix.directory }}.json`);
-    const publish = workflow.slice(workflow.indexOf("  publish:"));
-    expect(publish).toContain("name: release-candidate");
-    expect(publish).toContain("sha256sum -c checksums.txt");
-    expect(publish.indexOf("sha256sum -c checksums.txt"))
-      .toBeLessThan(publish.indexOf("name: Attest staged release assets"));
-    expect(publish.indexOf("name: Attest staged release assets"))
-      .toBeLessThan(publish.indexOf("name: Stage offline provenance bundle"));
-    expect(publish.indexOf("name: Stage offline provenance bundle"))
-      .toBeLessThan(publish.indexOf("gh release create"));
-    expect(publish).toContain("steps.provenance.outputs.bundle-path");
-    expect(publish).toContain("build/release/aidlc-release.intoto.jsonl");
-    expect(publish).not.toContain("scripts/package-release.ts");
-    expect(publish).not.toContain("pattern: binary-*");
+    expect(workflow).not.toContain("python3 -m http.server");
+    expect(workflow).toContain('env PATH="/usr/bin:/bin"');
 
     // Release artifacts must build from projections regenerated ON the runner,
-    // never from the committed trees: every dist-consuming job regenerates
+    // never from checkout residue: every dist-consuming job regenerates
     // before its consuming step, and the build job keeps --check after the
-    // regen as a generator-determinism guard. This ordering is what lets the
-    // committed dist trees leave the repository without touching the release
-    // pipeline.
+    // regen as a generator-determinism guard.
     const regen = "run: bun scripts/package.ts\n";
     const verifyJob = workflow.slice(
       workflow.indexOf("  verify:"),
@@ -1389,13 +1381,181 @@ describe("t244 Windows and completion release surfaces", () => {
       .toBeLessThan(buildJob.indexOf("bun scripts/package.ts --check"));
     expect(buildJob.indexOf("bun scripts/package.ts --check"))
       .toBeLessThan(buildJob.indexOf("bun scripts/build-binaries.ts"));
+    const stageRelease = workflowJob(workflow, "stage-release");
+    expect(stageRelease).toContain(regen);
+    expect(stageRelease.indexOf(regen))
+      .toBeLessThan(stageRelease.indexOf("bun scripts/package-release.ts"));
+  });
+
+  test("release MUST 1: only publish can sign and stage-release has no provenance bundle", () => {
+    const workflow = readFileSync(RELEASE_WORKFLOW, "utf-8");
+    const parsed = Bun.YAML.parse(workflow) as {
+      jobs: Record<string, { permissions?: Record<string, string> }>;
+    };
+    const signingJobs = Object.entries(parsed.jobs)
+      .filter(([, job]) =>
+        job.permissions?.["id-token"] === "write" ||
+        job.permissions?.attestations === "write"
+      )
+      .map(([name]) => name);
+    expect(signingJobs).toEqual(["publish"]);
+    expect(parsed.jobs["stage-release"].permissions).toEqual({ contents: "read" });
+    const stageRelease = workflowJob(workflow, "stage-release");
+    expect(stageRelease).toContain("name: release-candidate");
+    expect(stageRelease).not.toContain("Attest staged release assets");
+    expect(stageRelease).not.toContain("aidlc-release.intoto.jsonl");
+    expect(stageRelease).not.toContain("attest-build-provenance");
+  });
+
+  test("release MUST 2: lifecycle jobs use checksums only and keep user trust-root features", () => {
+    const workflow = readFileSync(RELEASE_WORKFLOW, "utf-8");
+    const windows = workflowJob(workflow, "windows-lifecycle");
+    const unix = workflowJob(workflow, "unix-lifecycle");
+    expect(windows).toContain("checksums.txt");
+    expect(windows).toContain("Get-FileHash -Algorithm SHA256");
+    expect(windows).toContain("install.ps1 -From $releaseRoot -Offline");
+    expect(unix).toContain("sha256sum -c checksums.txt");
+    expect(unix).toContain("shasum -a 256 -c checksums.txt");
+    expect(unix).toContain('install.sh" --from "$release" --offline');
+    for (const lifecycle of [windows, unix]) {
+      expect(lifecycle).not.toContain("attestation verify");
+      expect(lifecycle).not.toContain("aidlc-release.intoto.jsonl");
+      expect(lifecycle).not.toContain("AIDLC_RELEASE_REPOSITORY");
+      expect(lifecycle).not.toContain("AIDLC_RELEASE_WORKFLOW");
+      expect(lifecycle).not.toContain("AIDLC_GH_BIN");
+    }
+    const unixInstaller = readFileSync(INSTALL_SH, "utf-8");
+    const windowsInstaller = readFileSync(INSTALL_PS1, "utf-8");
+    for (const variable of [
+      "AIDLC_RELEASE_REPOSITORY",
+      "AIDLC_RELEASE_WORKFLOW",
+    ]) {
+      expect(unixInstaller).toContain(variable);
+      expect(windowsInstaller).toContain(variable);
+    }
+    expect(unixInstaller).toContain("AIDLC_GH_BIN");
+  });
+
+  test("release MUST 3: gated publish attests and always creates a draft", () => {
+    const workflow = readFileSync(RELEASE_WORKFLOW, "utf-8");
+    const parsed = Bun.YAML.parse(workflow) as {
+      jobs: Record<string, {
+        permissions?: Record<string, string>;
+        environment?: string;
+      }>;
+    };
+    expect(parsed.jobs.publish.permissions).toEqual({
+      contents: "write",
+      "id-token": "write",
+      attestations: "write",
+    });
+    expect(parsed.jobs.publish.environment).toBe("release");
+    const publish = workflowJob(workflow, "publish");
+    expect(publish).toContain('test "$(git rev-parse HEAD)" = "$AUTHORIZED_SHA"');
+    expect(publish).toContain("sha256sum -c checksums.txt");
+    expect(publish).toContain("name: Attest staged release assets");
+    expect(publish).toContain("name: Stage offline provenance bundle");
+    expect(publish).toContain("steps.provenance.outputs.bundle-path");
+    expect(publish).toContain("gh release create");
+    expect(publish).toContain("--draft");
+    expect(publish.indexOf("sha256sum -c checksums.txt"))
+      .toBeLessThan(publish.indexOf("name: Attest staged release assets"));
+    expect(publish.indexOf("name: Attest staged release assets"))
+      .toBeLessThan(publish.indexOf("name: Stage offline provenance bundle"));
+    expect(publish.indexOf("name: Stage offline provenance bundle"))
+      .toBeLessThan(publish.indexOf("gh release create"));
+    expect(publish).not.toContain("inputs.draft");
+  });
+
+  test("release MUST 4: read-only verify-release checks the draft's actual assets and both provenance paths", () => {
+    const workflow = readFileSync(RELEASE_WORKFLOW, "utf-8");
+    const parsed = Bun.YAML.parse(workflow) as {
+      jobs: Record<string, {
+        needs?: string;
+        permissions?: Record<string, string>;
+        environment?: string;
+      }>;
+    };
+    expect(parsed.jobs["verify-release"].needs).toBe("publish");
+    expect(parsed.jobs["verify-release"].permissions).toEqual({ contents: "read" });
+    expect(parsed.jobs["verify-release"].environment).toBeUndefined();
+    const verifyRelease = workflowJob(workflow, "verify-release");
+    expect(verifyRelease).toContain("gh release view");
+    expect(verifyRelease).toContain("--json isDraft");
+    expect(verifyRelease).toContain("gh release download");
+    expect(verifyRelease).not.toContain("actions/download-artifact");
+    expect(verifyRelease).toContain("sha256sum -c checksums.txt");
+    expect(verifyRelease).toContain('test "$RELEASE_TAG" = "v$(jq -r .version version.json)"');
+    expect(verifyRelease).toContain(
+      'select(.kind == "binary" or .kind == "runtime")',
+    );
+    expect(verifyRelease.match(/gh attestation verify "\$asset"/g)).toHaveLength(2);
+    expect(verifyRelease).toContain('--repo "$GH_REPO"');
+    expect(verifyRelease).toContain("--bundle aidlc-release.intoto.jsonl");
+    expect(verifyRelease).toContain(
+      "oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6",
+    );
+    expect(verifyRelease).toContain("bun-version: 1.3.14");
+    expect(verifyRelease).toContain('server_root="$RUNNER_TEMP/aidlc-draft-server"');
+    expect(verifyRelease).toContain('mkdir -p "$server_root/latest/download"');
+    expect(verifyRelease).toContain("Bun.serve({");
+    expect(verifyRelease).toContain("Bun.file(join(root, ...parts))");
+    expect(verifyRelease).toContain("return await file.exists()");
+    expect(verifyRelease).not.toContain("{ dir:");
+    expect(verifyRelease).toContain('env PATH="/usr/bin:/bin"');
+    expect(verifyRelease).toContain('AIDLC_GH_BIN="$gh_bin"');
+    expect(verifyRelease).toContain(
+      '--release-base-url "http://127.0.0.1:$port"',
+    );
+    expect(verifyRelease).toContain('"$command" version');
+    expect(verifyRelease).toContain(
+      '--project-dir "$project" --harness claude --mcp none --quiet',
+    );
+    expect(verifyRelease).toContain('"$command" doctor');
+    expect(verifyRelease).not.toContain("AIDLC_RELEASE_REPOSITORY");
+    expect(verifyRelease).not.toContain("AIDLC_RELEASE_WORKFLOW");
+  });
+
+  test("release MUST 5: separately gated promote publishes only verified drafts", () => {
+    const workflow = readFileSync(RELEASE_WORKFLOW, "utf-8");
+    const parsed = Bun.YAML.parse(workflow) as {
+      jobs: Record<string, {
+        needs?: string;
+        permissions?: Record<string, string>;
+        environment?: string;
+        if?: string;
+      }>;
+    };
+    expect(parsed.jobs.promote.needs).toBe("verify-release");
+    expect(parsed.jobs.promote.permissions).toEqual({ contents: "write" });
+    expect(parsed.jobs.promote.environment).toBe("release");
+    expect(parsed.jobs.promote.if).toBe(
+      "github.event_name != 'workflow_dispatch' || inputs.draft == false",
+    );
+    const promote = workflowJob(workflow, "promote");
+    expect(promote).toContain('gh release edit "$RELEASE_TAG" --draft=false');
+    expect(workflow).toContain(
+      "description: Leave the verified release as a draft for manual promotion",
+    );
+  });
+
+  test("release MUST 6: verify failure leaves the draft and evidence intact", () => {
+    const workflow = readFileSync(RELEASE_WORKFLOW, "utf-8");
+    const publish = workflowJob(workflow, "publish");
+    const verifyRelease = workflowJob(workflow, "verify-release");
+    const promote = workflowJob(workflow, "promote");
+    expect(publish).toContain("gh release create");
+    expect(publish).toContain("--draft");
+    expect(verifyRelease).not.toContain("gh release delete");
+    expect(verifyRelease).not.toContain("gh release edit");
+    expect(verifyRelease).not.toContain("always()");
+    expect(promote).not.toContain("always()");
+    expect(workflow).not.toContain("gh release delete");
   });
 
   test("CI test job builds the projections before running the tiers", () => {
     // The same generator-driven rule for the per-push gate: the tiers exercise
-    // CI-built bytes, so removing the committed dist trees later cannot change
-    // what CI tests. The contract job keeps `bun run check` (and its --check
-    // drift guard) for as long as the copy channel ships committed trees.
+    // CI-built bytes from a fresh checkout.
     const ci = readFileSync(
       join(REPO_ROOT, ".github", "workflows", "ci.yml"),
       "utf-8",
@@ -1404,5 +1564,8 @@ describe("t244 Windows and completion release surfaces", () => {
     const regen = "run: bun scripts/package.ts";
     expect(testJob).toContain(regen);
     expect(testJob.indexOf(regen)).toBeLessThan(testJob.indexOf("tests/run-tests.ts"));
+    const deepJob = ci.slice(ci.indexOf("\n  test-deep:"), ci.indexOf("\n  changelog-guard:"));
+    expect(deepJob).toContain(regen);
+    expect(deepJob.indexOf(regen)).toBeLessThan(deepJob.indexOf("tests/run-tests.ts"));
   });
 });
