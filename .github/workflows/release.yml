@@ -441,7 +441,13 @@ jobs:
           env PATH="/usr/bin:/bin" "$command" config \
             --project-dir "$project" --harness claude --mcp none --quiet
           env PATH="/usr/bin:/bin" "$command" doctor \
-            --project-dir "$project" --quiet
+            --project-dir "$project" --quiet || {
+            # A failed gate must name its rows: re-run verbose for the log,
+            # then fail the job with the original verdict.
+            env PATH="/usr/bin:/bin" "$command" doctor \
+              --project-dir "$project" --verbose || true
+            exit 1
+          }
 
       - name: Promote verified draft release
         if: github.event_name != 'workflow_dispatch' || inputs.draft == false
