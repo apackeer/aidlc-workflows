@@ -52,6 +52,16 @@ const LIFECYCLE = join(REPO_ROOT, "core", "tools", "aidlc-lifecycle.ts");
 const INSTALL_SH = join(REPO_ROOT, "scripts", "install.sh");
 const INSTALL_PS1 = join(REPO_ROOT, "scripts", "install.ps1");
 const RELEASE_WORKFLOW = join(REPO_ROOT, ".github", "workflows", "release.yml");
+const UTILITY = join(REPO_ROOT, "core", "tools", "aidlc-utility.ts");
+const RELEASE_HARNESSES = [
+  "claude",
+  "codex",
+  "copilot",
+  "cursor",
+  "kiro",
+  "kiro-ide",
+  "opencode",
+] as const;
 const temporary: string[] = [];
 const originalPath = process.env.PATH;
 
@@ -772,7 +782,7 @@ describe("t244 management lifecycle", () => {
       "update", "--version", AIDLC_VERSION, "--from", release,
     ], project, env);
     expect(installed.status, installed.stdout + installed.stderr).toBe(0);
-    for (const harness of ["claude", "codex", "kiro", "kiro-ide", "opencode"]) {
+    for (const harness of RELEASE_HARNESSES) {
       expect(existsSync(join(machine, "versions", AIDLC_VERSION, "runtime", harness))).toBe(true);
     }
     for (const file of ["aidlc.bash", "_aidlc", "aidlc.fish", "aidlc.ps1"]) {
@@ -1360,6 +1370,19 @@ describe("t244 Windows and completion release surfaces", () => {
     }
   });
 
+  test("doctor command-pointer text is grammatical without an active version", () => {
+    const source = readFileSync(UTILITY, "utf-8");
+    expect(source).toContain(
+      `\`Command pointer is missing or does not select active version \${installedVersion}\``,
+    );
+    expect(source).toContain(
+      '"Command pointer is missing or does not select an active version"',
+    );
+    expect(source).not.toContain(
+      `active version \${installedVersion ?? "unknown"}`,
+    );
+  });
+
   test("Unix installer supports explicit provenance trust roots under a stripped PATH", () => {
     const script = readFileSync(INSTALL_SH, "utf-8");
     expect(script).toContain("AIDLC_RELEASE_REPOSITORY");
@@ -1549,6 +1572,17 @@ describe("t244 Windows and completion release surfaces", () => {
     expect(windows).toContain("checksums.txt");
     expect(windows).toContain("Get-FileHash -Algorithm SHA256");
     expect(windows).toContain("install.ps1 -From $releaseRoot -Offline");
+    expect(windows).toContain(
+      "$harnesses = @('claude', 'codex', 'copilot', 'cursor', 'kiro', 'kiro-ide', 'opencode')",
+    );
+    expect(windows).toContain(
+      "$env:COPILOT_HOME = Join-Path $env:RUNNER_TEMP 'aidlc-copilot-home'",
+    );
+    expect(windows).toContain("@{ trustedFolders = @($project) }");
+    expect(windows).toContain(
+      "& $command config --project-dir $project --harness $harness --mcp none --quiet",
+    );
+    expect(windows).toContain("& $command doctor --project-dir $project --quiet");
     expect(windows).toContain("$deadline = [DateTime]::UtcNow.AddSeconds(60)");
     expect(windows).toContain("$commandExists = Test-Path -LiteralPath $command");
     expect(windows).toContain(
@@ -1567,6 +1601,21 @@ describe("t244 Windows and completion release surfaces", () => {
     expect(unix).toContain("sha256sum -c checksums.txt");
     expect(unix).toContain("shasum -a 256 -c checksums.txt");
     expect(unix).toContain('install.sh" --from "$release" --offline');
+    expect(unix).toContain(
+      "for harness in claude codex copilot cursor kiro kiro-ide opencode; do",
+    );
+    expect(unix).toContain(
+      'export COPILOT_HOME="$RUNNER_TEMP/aidlc-copilot-home"',
+    );
+    expect(unix).toContain(
+      `printf '{"trustedFolders":["%s"]}\\n' "$project" > "$COPILOT_HOME/config.json"`,
+    );
+    expect(unix).toContain(
+      '--project-dir "$project" --harness "$harness" --mcp none --quiet',
+    );
+    expect(unix).toContain(
+      'env PATH="/usr/bin:/bin" "$command" doctor',
+    );
     for (const lifecycle of [windows, unix]) {
       expect(lifecycle).not.toContain("attestation verify");
       expect(lifecycle).not.toContain("aidlc-release.intoto.jsonl");
@@ -1672,6 +1721,12 @@ describe("t244 Windows and completion release surfaces", () => {
       '--project-dir "$project" --harness claude --mcp none --quiet',
     );
     expect(promote).toContain('"$command" doctor');
+    expect(promote).toContain(
+      "Coverage boundary: pre-gate lifecycle jobs scaffold and doctor all",
+    );
+    expect(
+      [...promote.matchAll(/--harness ([a-z-]+)/g)].map((match) => match[1]),
+    ).toEqual(["claude"]);
     // Repo-relative trust roots: identical to the installer defaults on the
     // canonical repository, and the only shape that lets a fork shakedown
     // verify its own attestations (round-6 evidence). A literal repository

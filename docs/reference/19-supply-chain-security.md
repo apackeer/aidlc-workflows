@@ -71,7 +71,10 @@ release, tag, attestations, or audit record.
 binaries, and `aidlc-runtime.tar.gz`. The staging job verifies those bytes,
 then uploads one `release-candidate` without a provenance bundle. Unix and
 Windows lifecycle jobs checksum and test that exact artifact without signing
-permissions. After the human gate, `publish` downloads the candidate,
+permissions. Each lifecycle job then scaffolds and doctors all seven harnesses
+in separate fresh projects; Unix runs every installed command under its
+stripped `PATH`. This pre-gate lifecycle coverage owns harness breadth. After
+the human gate, `publish` downloads the candidate,
 re-verifies it, attests `build/release/*`, copies the Sigstore bundle to the
 stable asset name `aidlc-release.intoto.jsonl`, and creates the draft without
 rebuilding or repackaging. The gated `promote` job validates the assets
@@ -81,7 +84,9 @@ installer with Bun removed from `PATH` and an absolute `gh` path. That
 rehearsal exercises release transport, the installer's mandatory provenance
 branch against the draft's exported bundle, native `version`, one Claude
 project config, and doctor before the final conditional step can make the
-draft public. The bundle is
+draft public. Keeping that online rehearsal Claude-only is deliberate:
+lifecycle provides seven-harness breadth, while promote proves authenticated
+transport plus one complete installed journey. The bundle is
 intentionally not listed in either `version.json` or `checksums.txt`: those
 files describe and digest the installable artifacts, while the bundle is its
 own trust channel and is verified with Sigstore or `gh attestation verify`.

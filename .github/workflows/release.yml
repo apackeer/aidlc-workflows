@@ -237,6 +237,22 @@ jobs:
           if ($pointer.Trim() -notmatch '\\versions\\[0-9]+\.[0-9]+\.[0-9]+\\aidlc\.exe$') {
             throw "invalid active executable pointer: $pointer"
           }
+          $env:COPILOT_HOME = Join-Path $env:RUNNER_TEMP 'aidlc-copilot-home'
+          [IO.Directory]::CreateDirectory($env:COPILOT_HOME) | Out-Null
+          $harnesses = @('claude', 'codex', 'copilot', 'cursor', 'kiro', 'kiro-ide', 'opencode')
+          foreach ($harness in $harnesses) {
+            $project = Join-Path $env:RUNNER_TEMP "aidlc-$harness-project-$([Guid]::NewGuid().ToString('N'))"
+            [IO.Directory]::CreateDirectory($project) | Out-Null
+            if ($harness -eq 'copilot') {
+              @{ trustedFolders = @($project) } |
+                ConvertTo-Json |
+                Set-Content -LiteralPath (Join-Path $env:COPILOT_HOME 'config.json')
+            }
+            & $command config --project-dir $project --harness $harness --mcp none --quiet
+            if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+            & $command doctor --project-dir $project --quiet
+            if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          }
           & $command uninstall --purge --yes --quiet
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           $deadline = [DateTime]::UtcNow.AddSeconds(60)
@@ -278,15 +294,18 @@ jobs:
             sh "$release/install.sh" --from "$release" --offline --quiet
           command="$AIDLC_BIN_DIR/aidlc"
           env PATH="/usr/bin:/bin" "$command" version
-          claude_project="$RUNNER_TEMP/aidlc-claude-project"
-          opencode_project="$RUNNER_TEMP/aidlc-opencode-project"
-          mkdir -p "$claude_project" "$opencode_project"
-          env PATH="/usr/bin:/bin" "$command" config \
-            --project-dir "$claude_project" --harness claude --mcp none --quiet
-          env PATH="/usr/bin:/bin" "$command" doctor \
-            --project-dir "$claude_project" --quiet
-          env PATH="/usr/bin:/bin" "$command" config \
-            --project-dir "$opencode_project" --harness opencode --mcp none --quiet
+          export COPILOT_HOME="$RUNNER_TEMP/aidlc-copilot-home"
+          mkdir -p "$COPILOT_HOME"
+          for harness in claude codex copilot cursor kiro kiro-ide opencode; do
+            project="$(mktemp -d "$RUNNER_TEMP/aidlc-$harness-project.XXXXXX")"
+            if [ "$harness" = copilot ]; then
+              printf '{"trustedFolders":["%s"]}\n' "$project" > "$COPILOT_HOME/config.json"
+            fi
+            env PATH="/usr/bin:/bin" "$command" config \
+              --project-dir "$project" --harness "$harness" --mcp none --quiet
+            env PATH="/usr/bin:/bin" "$command" doctor \
+              --project-dir "$project" --quiet
+          done
 
   publish:
     needs: [authorize, musl-smoke, windows-lifecycle, unix-lifecycle]
@@ -443,6 +462,9 @@ jobs:
           env PATH="/usr/bin:/bin" "$command" version
           project="$RUNNER_TEMP/aidlc-online-project"
           mkdir -p "$project"
+          # Coverage boundary: pre-gate lifecycle jobs scaffold and doctor all
+          # seven harnesses. This online post-attestation rehearsal stays
+          # Claude-only to prove transport, provenance, and one project journey.
           env PATH="/usr/bin:/bin" "$command" config \
             --project-dir "$project" --harness claude --mcp none --quiet
           env PATH="/usr/bin:/bin" "$command" doctor \

@@ -1421,7 +1421,9 @@ export async function collectDoctorReport(
       pass: pointerValid,
       label: pointerValid
         ? `Command pointer: ${command} -> ${installedVersion}`
-        : `Command pointer is missing or does not select active version ${installedVersion ?? "unknown"}`,
+        : installedVersion
+        ? `Command pointer is missing or does not select active version ${installedVersion}`
+        : "Command pointer is missing or does not select an active version",
       fix: "re-run `aidlc update --version <version> --from <release-directory>`",
     });
 
@@ -1470,23 +1472,34 @@ export async function collectDoctorReport(
     });
 
     if (compiled) {
+      const currentHarnessDir = harnessDir();
+      const currentHarnessName = runtimeHarnessName(projectDir, currentHarnessDir);
       const commands: string[] = [];
       const collectCommands = (value: unknown): void => {
         if (Array.isArray(value)) {
           for (const item of value) collectCommands(item);
         } else if (value && typeof value === "object") {
           for (const [key, item] of Object.entries(value as Record<string, unknown>)) {
-            if (key === "command" && typeof item === "string") commands.push(item);
+            if (
+              (key === "command" || key === "bash" || key === "powershell") &&
+              typeof item === "string"
+            ) commands.push(item);
             else collectCommands(item);
           }
         }
       };
-      const harnessRoot = join(projectDir, harnessDir());
+      const harnessRoot = join(projectDir, currentHarnessDir);
       const trustFiles = [
         join(harnessRoot, "settings.json"),
         join(harnessRoot, "hooks.json"),
         join(projectDir, ".vscode", "settings.json"),
       ];
+      if (currentHarnessDir === ".cursor") {
+        trustFiles.push(join(harnessRoot, "cli.json"));
+      }
+      if (currentHarnessName === "copilot") {
+        trustFiles.push(join(projectDir, ".github", "hooks", "aidlc.json"));
+      }
       const agentsDir = join(harnessRoot, "agents");
       if (existsSync(agentsDir)) {
         trustFiles.push(...readdirSync(agentsDir)
@@ -1530,19 +1543,19 @@ export async function collectDoctorReport(
       const legacy = commands.filter((command) =>
         /\bbun\s+[^\n]*(?:\/(?:tools|hooks)\/aidlc|\\?\.kiro\/tools\/)/.test(command)
       );
-      const nativeHooks = commands.some((command) =>
+      let nativeHooks = commands.some((command) =>
         ["hook", "adapter", "statusline"].some((noun) =>
           command.includes(`${TRUSTED_COMMAND_PREFIX} ${noun}`)
         )
       );
       let nativePermission = false;
-      if (harnessDir() === ".claude") {
+      if (currentHarnessDir === ".claude") {
         nativePermission = commands.includes(`Bash(${trustedCommand("*")})`) &&
           !commands.includes("Bash");
-      } else if (harnessDir() === ".kiro") {
+      } else if (currentHarnessDir === ".kiro") {
         nativePermission = commands.includes(trustedCommand(".*")) ||
           commands.includes(trustedCommand("*"));
-      } else if (harnessDir() === ".codex") {
+      } else if (currentHarnessDir === ".codex") {
         const rules = join(harnessRoot, "rules", "default.rules");
         const seed = join(harnessRoot, "trust-seed.toml");
         const hooks = join(harnessRoot, "hooks.json");
@@ -1562,6 +1575,30 @@ export async function collectDoctorReport(
           ) &&
           hashes.length > 0 &&
           hashes.every((hash) => seedText.includes(`trusted_hash = "${hash}"`));
+      } else if (currentHarnessDir === ".cursor") {
+        nativePermission = commands.includes(`Shell(${trustedCommand("*")})`);
+      } else if (currentHarnessName === "copilot") {
+        // Copilot has no project command allowlist. Its folder-trust contract
+        // is checked separately below; this row verifies native hook wiring.
+        nativePermission = nativeHooks;
+      } else if (currentHarnessName === "opencode") {
+        const configPath = ["opencode.json", "opencode.jsonc"]
+          .map((name) => join(projectDir, name))
+          .find(existsSync);
+        try {
+          const config = configPath
+            ? Bun.JSONC.parse(readFileSync(configPath, "utf-8")) as {
+              permission?: { bash?: Record<string, unknown> };
+            }
+            : {};
+          nativePermission =
+            config.permission?.bash?.[trustedCommand("*")] === "allow";
+        } catch {
+          nativePermission = false;
+        }
+        nativeHooks = existsSync(
+          join(projectDir, ".opencode", "plugin", "aidlc-opencode-adapter.ts"),
+        );
       }
       const nativeTrustReady = legacy.length === 0 && nativeHooks && nativePermission;
       results.push({

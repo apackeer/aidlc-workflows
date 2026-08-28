@@ -867,6 +867,21 @@ function rewriteClaudeNativePermissions(outRoot: string, m: HarnessManifest): vo
   writeFileSync(settingsPath, `${JSON.stringify(value, null, 2)}\n`);
 }
 
+function rewriteCursorNativePermissions(outRoot: string, m: HarnessManifest): void {
+  if (m.tierFlavor !== "cursor") return;
+  const cliPath = join(outRoot, m.harnessDir, "cli.json");
+  const value = JSON.parse(readFileSync(cliPath, "utf-8")) as {
+    permissions?: { allow?: unknown };
+  };
+  const allow = value.permissions?.allow;
+  if (!Array.isArray(allow)) throw new Error("[cursor] cli.json has no permissions.allow list");
+  value.permissions!.allow = [
+    ...allow.filter((entry) => entry !== "Shell(bun)"),
+    `Shell(${trustedCommand("*")})`,
+  ];
+  writeFileSync(cliPath, `${JSON.stringify(value, null, 2)}\n`);
+}
+
 function rewriteNativeOnboarding(value: string): string {
   return value
     .replace(
@@ -1025,6 +1040,7 @@ function rewriteNativeInvocations(
   }
   rewriteKiroNativeAllowlists(outRoot, m);
   rewriteClaudeNativePermissions(outRoot, m);
+  rewriteCursorNativePermissions(outRoot, m);
   if (m.tierFlavor === "codex") {
     const { emitDefaultRules, emitTrustSeed } = require(
       join(HARNESS_ROOT, m.name, "emit.ts"),

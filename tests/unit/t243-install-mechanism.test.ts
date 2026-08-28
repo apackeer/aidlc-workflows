@@ -71,6 +71,8 @@ const INSTALLER = join(REPO_ROOT, "scripts", "install.sh");
 const CLAUDE_COPY = join(REPO_ROOT, "dist", "claude");
 const CLAUDE_RELEASE = join(REPO_ROOT, "dist-release", "claude");
 const CODEX_RELEASE = join(REPO_ROOT, "dist-release", "codex");
+const COPILOT_RELEASE = join(REPO_ROOT, "dist-release", "copilot");
+const CURSOR_RELEASE = join(REPO_ROOT, "dist-release", "cursor");
 const KIRO_IDE_COPY = join(REPO_ROOT, "dist", "kiro-ide");
 const KIRO_IDE_RELEASE = join(REPO_ROOT, "dist-release", "kiro-ide");
 const OPENCODE_RELEASE = join(REPO_ROOT, "dist-release", "opencode");
@@ -2908,6 +2910,25 @@ describe("t243 projection channel", () => {
     expect(trust).toContain(`projected \`${trustedCommand("adapter codex")} ...\``);
     expect(trust).not.toContain("bun .codex/tools/aidlc.ts");
     expect(trust).not.toContain("bun scripts/package.ts codex trust");
+    const cursorCli = JSON.parse(
+      readFileSync(join(CURSOR_RELEASE, ".cursor", "cli.json"), "utf-8"),
+    ) as { permissions: { allow: string[] } };
+    expect(cursorCli.permissions.allow).toEqual([
+      `Shell(${trustedCommand("*")})`,
+    ]);
+    expect(cursorCli.permissions.allow).not.toContain("Shell(bun)");
+    const cursorHooks = readFileSync(
+      join(CURSOR_RELEASE, ".cursor", "hooks.json"),
+      "utf-8",
+    );
+    expect(cursorHooks).toContain(trustedCommand("hook cursor-adapter"));
+    expect(cursorHooks).not.toContain("bun .cursor/hooks/");
+    const copilotHooks = readFileSync(
+      join(COPILOT_RELEASE, ".github", "hooks", "aidlc.json"),
+      "utf-8",
+    );
+    expect(copilotHooks).toContain(trustedCommand("hook copilot-adapter"));
+    expect(copilotHooks).not.toContain("bun .aidlc/hooks/");
     const opencode = JSON.parse(
       readFileSync(join(OPENCODE_RELEASE, "opencode.json"), "utf-8"),
     ) as { permission: { bash: Record<string, string> } };
