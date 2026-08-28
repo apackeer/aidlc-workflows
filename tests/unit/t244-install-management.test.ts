@@ -1617,56 +1617,7 @@ describe("t244 Windows and completion release surfaces", () => {
     expect(publish).not.toContain("inputs.draft");
   });
 
-  test("release MUST 4: read-only verify-release checks the draft's actual assets and both provenance paths", () => {
-    const workflow = readFileSync(RELEASE_WORKFLOW, "utf-8");
-    const parsed = Bun.YAML.parse(workflow) as {
-      jobs: Record<string, {
-        needs?: string;
-        permissions?: Record<string, string>;
-        environment?: string;
-      }>;
-    };
-    expect(parsed.jobs["verify-release"].needs).toBe("publish");
-    expect(parsed.jobs["verify-release"].permissions).toEqual({ contents: "read" });
-    expect(parsed.jobs["verify-release"].environment).toBeUndefined();
-    const verifyRelease = workflowJob(workflow, "verify-release");
-    expect(verifyRelease).toContain("gh release view");
-    expect(verifyRelease).toContain("--json isDraft");
-    expect(verifyRelease).toContain("gh release download");
-    expect(verifyRelease).not.toContain("actions/download-artifact");
-    expect(verifyRelease).toContain("sha256sum -c checksums.txt");
-    expect(verifyRelease).toContain('test "$RELEASE_TAG" = "v$(jq -r .version version.json)"');
-    expect(verifyRelease).toContain(
-      'select(.kind == "binary" or .kind == "runtime")',
-    );
-    expect(verifyRelease.match(/gh attestation verify "\$asset"/g)).toHaveLength(2);
-    expect(verifyRelease).toContain('--repo "$GH_REPO"');
-    expect(verifyRelease).toContain("--bundle aidlc-release.intoto.jsonl");
-    expect(verifyRelease).toContain(
-      "oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6",
-    );
-    expect(verifyRelease).toContain("bun-version: 1.3.14");
-    expect(verifyRelease).toContain('server_root="$RUNNER_TEMP/aidlc-draft-server"');
-    expect(verifyRelease).toContain('mkdir -p "$server_root/latest/download"');
-    expect(verifyRelease).toContain("Bun.serve({");
-    expect(verifyRelease).toContain("Bun.file(join(root, ...parts))");
-    expect(verifyRelease).toContain("return await file.exists()");
-    expect(verifyRelease).not.toContain("{ dir:");
-    expect(verifyRelease).toContain('env PATH="/usr/bin:/bin"');
-    expect(verifyRelease).toContain('AIDLC_GH_BIN="$gh_bin"');
-    expect(verifyRelease).toContain(
-      '--release-base-url "http://127.0.0.1:$port"',
-    );
-    expect(verifyRelease).toContain('"$command" version');
-    expect(verifyRelease).toContain(
-      '--project-dir "$project" --harness claude --mcp none --quiet',
-    );
-    expect(verifyRelease).toContain('"$command" doctor');
-    expect(verifyRelease).not.toContain("AIDLC_RELEASE_REPOSITORY");
-    expect(verifyRelease).not.toContain("AIDLC_RELEASE_WORKFLOW");
-  });
-
-  test("release MUST 5: separately gated promote publishes only verified drafts", () => {
+  test("release MUST 4: gated promote checks the draft's actual assets and both provenance paths", () => {
     const workflow = readFileSync(RELEASE_WORKFLOW, "utf-8");
     const parsed = Bun.YAML.parse(workflow) as {
       jobs: Record<string, {
@@ -1676,14 +1627,85 @@ describe("t244 Windows and completion release surfaces", () => {
         if?: string;
       }>;
     };
-    expect(parsed.jobs.promote.needs).toBe("verify-release");
+    expect(parsed.jobs["verify-release"]).toBeUndefined();
+    expect(workflow).not.toContain("\n  verify-release:\n");
+    expect(parsed.jobs.promote.needs).toBe("publish");
     expect(parsed.jobs.promote.permissions).toEqual({ contents: "write" });
     expect(parsed.jobs.promote.environment).toBe("release");
-    expect(parsed.jobs.promote.if).toBe(
+    expect(parsed.jobs.promote.if).toBeUndefined();
+    const writeCapableJobs = Object.entries(parsed.jobs)
+      .filter(([, job]) => Object.values(job.permissions ?? {}).includes("write"));
+    expect(writeCapableJobs.map(([name]) => name).sort()).toEqual(["promote", "publish"]);
+    for (const [, job] of writeCapableJobs) {
+      expect(job.environment).toBe("release");
+    }
+    const promote = workflowJob(workflow, "promote");
+    expect(promote).toContain("gh release view");
+    expect(promote).toContain("--json isDraft");
+    expect(promote).toContain("gh release download");
+    expect(promote).not.toContain("actions/download-artifact");
+    expect(promote).toContain("sha256sum -c checksums.txt");
+    expect(promote).toContain('test "$RELEASE_TAG" = "v$(jq -r .version version.json)"');
+    expect(promote).toContain(
+      'select(.kind == "binary" or .kind == "runtime")',
+    );
+    expect(promote.match(/gh attestation verify "\$asset"/g)).toHaveLength(2);
+    expect(promote).toContain('--repo "$GH_REPO"');
+    expect(promote).toContain("--bundle aidlc-release.intoto.jsonl");
+    expect(promote).toContain(
+      "oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6",
+    );
+    expect(promote).toContain("bun-version: 1.3.14");
+    expect(promote).toContain('server_root="$RUNNER_TEMP/aidlc-draft-server"');
+    expect(promote).toContain('mkdir -p "$server_root/latest/download"');
+    expect(promote).toContain("Bun.serve({");
+    expect(promote).toContain("Bun.file(join(root, ...parts))");
+    expect(promote).toContain("return await file.exists()");
+    expect(promote).not.toContain("{ dir:");
+    expect(promote).toContain('env PATH="/usr/bin:/bin"');
+    expect(promote).toContain('AIDLC_GH_BIN="$gh_bin"');
+    expect(promote).toContain(
+      '--release-base-url "http://127.0.0.1:$port"',
+    );
+    expect(promote).toContain('"$command" version');
+    expect(promote).toContain(
+      '--project-dir "$project" --harness claude --mcp none --quiet',
+    );
+    expect(promote).toContain('"$command" doctor');
+    expect(promote).not.toContain("AIDLC_RELEASE_REPOSITORY");
+    expect(promote).not.toContain("AIDLC_RELEASE_WORKFLOW");
+  });
+
+  test("release MUST 5: gated promote always verifies and conditions only the public flip", () => {
+    const workflow = readFileSync(RELEASE_WORKFLOW, "utf-8");
+    const parsed = Bun.YAML.parse(workflow) as {
+      jobs: Record<string, {
+        needs?: string;
+        permissions?: Record<string, string>;
+        environment?: string;
+        if?: string;
+        steps?: Array<{ name?: string; if?: string; run?: string }>;
+      }>;
+    };
+    expect(parsed.jobs.promote.needs).toBe("publish");
+    expect(parsed.jobs.promote.permissions).toEqual({ contents: "write" });
+    expect(parsed.jobs.promote.environment).toBe("release");
+    expect(parsed.jobs.promote.if).toBeUndefined();
+    const verificationStep = parsed.jobs.promote.steps?.find(
+      (step) => step.name === "Verify draft release assets and provenance",
+    );
+    const promotionStep = parsed.jobs.promote.steps?.find(
+      (step) => step.name === "Promote verified draft release",
+    );
+    expect(verificationStep).toBeDefined();
+    expect(verificationStep?.if).toBeUndefined();
+    expect(promotionStep?.if).toBe(
       "github.event_name != 'workflow_dispatch' || inputs.draft == false",
     );
     const promote = workflowJob(workflow, "promote");
     expect(promote).toContain('gh release edit "$RELEASE_TAG" --draft=false');
+    expect(promote.indexOf("name: Verify draft release assets and provenance"))
+      .toBeLessThan(promote.indexOf('gh release edit "$RELEASE_TAG" --draft=false'));
     expect(workflow).toContain(
       "description: Leave the verified release as a draft for manual promotion",
     );
@@ -1692,14 +1714,14 @@ describe("t244 Windows and completion release surfaces", () => {
   test("release MUST 6: verify failure leaves the draft and evidence intact", () => {
     const workflow = readFileSync(RELEASE_WORKFLOW, "utf-8");
     const publish = workflowJob(workflow, "publish");
-    const verifyRelease = workflowJob(workflow, "verify-release");
     const promote = workflowJob(workflow, "promote");
     expect(publish).toContain("gh release create");
     expect(publish).toContain("--draft");
-    expect(verifyRelease).not.toContain("gh release delete");
-    expect(verifyRelease).not.toContain("gh release edit");
-    expect(verifyRelease).not.toContain("always()");
+    expect(promote.indexOf("name: Verify draft release assets and provenance"))
+      .toBeLessThan(promote.indexOf('gh release edit "$RELEASE_TAG" --draft=false'));
+    expect(promote).not.toContain("gh release delete");
     expect(promote).not.toContain("always()");
+    expect(promote).not.toContain("continue-on-error");
     expect(workflow).not.toContain("gh release delete");
   });
 

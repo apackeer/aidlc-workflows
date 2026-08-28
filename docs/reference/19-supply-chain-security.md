@@ -40,13 +40,27 @@ cannot silently remain the branch from which the workflow was opened.
 The protected `release` environment requires non-author approval. After that
 gate, `publish` rechecks the authorized tag SHA, requires the tag to equal
 `v<version.json.version>`, re-verifies checksums, attests the candidate, exports
-the Sigstore bundle, and uses `gh release create --verify-tag --draft`. A
-read-only `verify-release` job downloads the draft's actual assets and checks
-their checksums, online provenance, exported-bundle provenance, and tag/version
-parity. Only then may `promote`, behind the same protected environment, flip the
-draft public. Tag-push runs and manual runs with `draft: false` auto-promote;
-manual `draft: true` runs leave the verified draft unpublished
-(`.github/workflows/release.yml`).
+the Sigstore bundle, and uses `gh release create --verify-tag --draft`.
+
+GitHub draft releases are visible only to identities with push access. Round 5
+shakedown run `33153448486` proved the constraint directly: `publish` created
+the `v2.7.0` draft with all 13 assets, while a subsequent `contents: read`
+token received `release not found` from its first `gh release view`. A
+standalone read-only draft verifier is therefore structurally impossible on
+GitHub.
+
+The second protected-environment job, `promote`, consequently receives
+`contents: write`, downloads the draft's actual assets, and checks their
+checksums, online provenance, exported-bundle provenance, tag/version parity,
+and real online-install journey. Its final release-edit step alone is
+conditional: tag-push runs and manual runs with `draft: false` flip the verified
+draft public, while manual `draft: true` runs perform the full verification and
+leave the draft unpublished (`.github/workflows/release.yml`).
+
+This platform constraint means the verifying identity is also the promoting
+identity. The accepted mitigations are the protected `release` environment,
+SHA-pinned workflow actions, and the immutable tag-bound workflow definition;
+no write-capable release job exists outside that environment.
 
 Published releases are immutable by policy. A defective artifact is corrected
 by a new patch release. A compromised release is excluded from update
@@ -60,13 +74,14 @@ Windows lifecycle jobs checksum and test that exact artifact without signing
 permissions. After the human gate, `publish` downloads the candidate,
 re-verifies it, attests `build/release/*`, copies the Sigstore bundle to the
 stable asset name `aidlc-release.intoto.jsonl`, and creates the draft without
-rebuilding or repackaging. `verify-release` validates the assets downloaded
-from that draft, then serves the downloaded directory through a loopback
-GitHub-shaped `latest/download/` mirror and runs the real online installer with
-Bun removed from `PATH` and an absolute `gh` path. That rehearsal exercises
-release transport, the installer's mandatory provenance branch against the
-draft's exported bundle, native `version`, one Claude project config, and
-doctor before `promote` makes the draft public. The bundle is
+rebuilding or repackaging. The gated `promote` job validates the assets
+downloaded from that draft, then serves the downloaded directory through a
+loopback GitHub-shaped `latest/download/` mirror and runs the real online
+installer with Bun removed from `PATH` and an absolute `gh` path. That
+rehearsal exercises release transport, the installer's mandatory provenance
+branch against the draft's exported bundle, native `version`, one Claude
+project config, and doctor before the final conditional step can make the
+draft public. The bundle is
 intentionally not listed in either `version.json` or `checksums.txt`: those
 files describe and digest the installable artifacts, while the bundle is its
 own trust channel and is verified with Sigstore or `gh attestation verify`.
@@ -80,10 +95,10 @@ The build job uses commit-SHA-pinned third-party actions, installs the frozen
 guard, and builds each target in a target-native matrix
 (`.github/workflows/release.yml`). The candidate is assembled once and consumed
 unchanged by checksum-only Unix and Windows lifecycle tests. After approval,
-`publish` re-verifies and attests those bytes, creates a draft, and
-`verify-release` verifies the draft's actual assets before promotion. GitHub
-artifact attestations provide the signed SLSA provenance for the post-gate
-draft subjects.
+`publish` re-verifies and attests those bytes and creates a draft. The gated
+`promote` job verifies the draft's actual assets before its final conditional
+publication step. GitHub artifact attestations provide the signed SLSA
+provenance for the post-gate draft subjects.
 
 ### Release or tag hijack
 
@@ -92,17 +107,19 @@ settings. They are not represented by files in this repository and must be
 confirmed before the first publication. The workflow independently rejects a
 tag whose commit is not on `v2`; `publish` rechecks that SHA, compares the
 selected tag with `version.json.version`, and uses
-`gh release create --verify-tag --draft`. `verify-release` repeats tag/version
-parity against the downloaded draft. Public visibility begins only when the
-separately gated `promote` job succeeds (`.github/workflows/release.yml`).
+`gh release create --verify-tag --draft`. The gated `promote` job repeats
+tag/version parity against the downloaded draft. Public visibility begins only
+when that job's conditional final release-edit step succeeds
+(`.github/workflows/release.yml`).
 
 ### Mirror or download tampering
 
 The staging and lifecycle jobs establish pre-gate byte integrity through
 `checksums.txt`. After approval, `publish` repeats checksum verification and
-attests the candidate. `verify-release` then downloads the draft's real assets,
-checks their checksums, and verifies both online provenance and the exported
-offline bundle before promotion. Remote installers and
+attests the candidate. The gated `promote` job then downloads the draft's real
+assets, checks their checksums, and verifies both online provenance and the
+exported offline bundle before its conditional publication step. Remote
+installers and
 `core/tools/aidlc-release.ts` first verify
 the attestation for `checksums.txt` against the repository, signer workflow,
 and release tag using `aidlc-release.intoto.jsonl`; only then do they verify the
@@ -119,15 +136,15 @@ that version explicitly and retain their own accepted-version floor.
 
 ### Partial publication failure
 
-Publication has no destructive automatic rollback. A failed `verify-release`
-leaves an unpromoted draft, excluded from latest/update discovery, and no
-cleanup destroys its assets or audit evidence. The named publication owner must
-inspect that draft and publish a complete corrective patch release when needed.
-Because attestation occurs after the approval gate but before draft
-verification, a defective draft still leaves transparency-log entries. This
-rare, post-gate, defect-only exposure is accepted; it preserves evidence while
-preventing public promotion. The owner assignment is a focused-review decision
-in section 7.
+Publication has no destructive automatic rollback. Failed verification inside
+`promote` occurs before the release-edit step and leaves an unpromoted draft,
+excluded from latest/update discovery; no cleanup destroys its assets or audit
+evidence. The named publication owner must inspect that draft and publish a
+complete corrective patch release when needed. Because attestation occurs
+after the approval gate but before draft verification, a defective draft still
+leaves transparency-log entries. This rare, post-gate, defect-only exposure is
+accepted; it preserves evidence while preventing public promotion. The owner
+assignment is a focused-review decision in section 7.
 
 ### Compromised release
 
@@ -222,10 +239,14 @@ schema.
 - `publish` is the only signing job. It receives `contents: write`,
   `id-token: write`, and `attestations: write` inside the protected `release`
   environment and consumes the authorization job's immutable tag SHA.
-- `verify-release` receives `contents: read` only and verifies the draft's
-  downloaded assets.
-- `promote` receives `contents: write` only and crosses the protected `release`
-  environment before making the verified draft public.
+- GitHub does not expose draft releases to `contents: read` identities. A
+  standalone read-only draft-verification job is not present.
+- `promote` receives `contents: write` inside the protected `release`
+  environment, verifies the draft's downloaded assets and both provenance
+  paths, rehearses the real online installer, and only then reaches its
+  conditional public-release edit.
+- No job outside the protected `release` environment receives any write
+  permission.
 - OIDC supplies short-lived identity to Sigstore; no long-lived signing key is
   stored in the repository.
 - The release tag must be protected and must point to the reviewed

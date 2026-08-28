@@ -81,10 +81,11 @@ verification and installer lint run first; target-native jobs produce binaries
 and evidence; `package-release.ts` runs once to create `release-candidate`; the
 staging job checksums and uploads it without signing; and Unix/Windows lifecycle
 jobs consume those bytes. After the protected release gate, `publish`
-re-verifies and attests the candidate and always creates a draft. A read-only
-job verifies the draft's actual checksums, tag/version parity, and online plus
-offline provenance before a separately gated promotion makes it public. Never
-rebuild, repackage, or substitute bytes after staging. The full trust design is
+re-verifies and attests the candidate and always creates a draft. GitHub
+requires push access to read drafts, so the protected `promote` job verifies
+the draft's actual checksums, tag/version parity, and online plus offline
+provenance before its final conditional public-release edit. Never rebuild,
+repackage, or substitute bytes after staging. The full trust design is
 [Supply-Chain Security](19-supply-chain-security.md).
 
 ## Testing

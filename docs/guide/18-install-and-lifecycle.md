@@ -159,13 +159,16 @@ The release workflow assembles the candidate once. Staging and Unix/Windows
 lifecycle jobs verify `checksums.txt` and test those bytes without signing
 permissions. After the protected release gate, `publish` re-verifies the
 candidate, attests it, exports `aidlc-release.intoto.jsonl`, and always creates
-a draft. A read-only job downloads and verifies the draft's actual assets,
-including online and exported-bundle provenance, before a separately gated
-promotion makes it public. The bundle is intentionally outside `version.json` and
-`checksums.txt`: those files cover the installable artifacts, while the bundle
-is its own Sigstore trust channel. TLS, SHA-256, and that provenance are the
-permanent trust model. OS code-signing and notarization are not part of it.
-See [Supply-Chain Security](../reference/19-supply-chain-security.md).
+a draft. GitHub exposes drafts only to push-capable identities, so the
+protected `promote` job uses `contents: write` to download and verify the
+draft's actual assets, including online and exported-bundle provenance. Its
+final public-release edit alone is conditional: `draft=true` dispatches still
+run the full verification and leave the verified draft unpublished. The bundle
+is intentionally outside `version.json` and `checksums.txt`: those files cover
+the installable artifacts, while the bundle is its own Sigstore trust channel.
+TLS, SHA-256, and that provenance are the permanent trust model. OS
+code-signing and notarization are not part of it. See
+[Supply-Chain Security](../reference/19-supply-chain-security.md).
 
 The installer refuses an existing mixed-ownership command. It also yields to
 an existing Homebrew or Nix command instead of replacing it. This project does
