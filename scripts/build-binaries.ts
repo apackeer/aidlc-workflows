@@ -2,13 +2,13 @@
 // scripts/build-binaries.ts - release artifact builder for the single AIDLC CLI.
 //
 // This stays separate from scripts/package.ts. package.ts is the deterministic
-// source projection and drift guard for dist/<harness>/; this script is the
+// source projection and determinism guard for dist/<harness>/; this script is the
 // release-oriented executable build that compiles the generated Claude
 // dispatcher and then smoke-gates each artifact. The binary entry is the
 // dist-release/ Claude dispatcher on purpose: release artifacts must embed the
-// native-invocation projection, not the Bun copy channel or core/. Run
-// `bun scripts/package.ts --check` first; this script enforces that guard before
-// compiling.
+// native-invocation projection, not the Bun copy channel or core/. This script
+// regenerates both projection roots and then enforces
+// `bun scripts/package.ts --check` before compiling.
 //
 // Never enable Bun bytecode. BYTECODE-1: Bun can exit 0, emit an artifact, and still
 // produce a binary that crashes before the dispatcher runs on this codebase.
@@ -29,7 +29,7 @@ import { tmpdir } from "node:os";
 import { dirname, isAbsolute, join, relative, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { targetTriple } from "../core/tools/aidlc-install-paths.ts";
-import { AIDLC_VERSION } from "../dist/claude/.claude/tools/aidlc-version.ts";
+import { AIDLC_VERSION } from "../core/tools/aidlc-version.ts";
 
 type TargetConfig = {
   name: string;
@@ -93,9 +93,11 @@ const DEFAULT_ENTRY = join(
 );
 const DEFAULT_OUT_DIR = join(REPO_ROOT, "build", "binaries");
 const RUNTIME_ASSET_ROOT = join(REPO_ROOT, "dist-release", "claude", ".claude");
-const RUNTIME_DISTRIBUTIONS = readdirSync(join(REPO_ROOT, "dist-release"), {
-  withFileTypes: true,
-}).filter((entry) => entry.isDirectory()).map((entry) => entry.name).sort();
+function runtimeDistributions(): string[] {
+  return readdirSync(join(REPO_ROOT, "dist-release"), {
+    withFileTypes: true,
+  }).filter((entry) => entry.isDirectory()).map((entry) => entry.name).sort();
+}
 const MIN_CROSS_BYTES = 10 * 1024 * 1024;
 const DEV_SPAWN_MARKER = "/* dev-mode bun spawn */";
 
@@ -1655,7 +1657,8 @@ function devSpawnGrepGate(entry: string): GateResult {
 function runtimeAssetsGate(artifact: string): GateResult {
   const artifactDir = dirname(artifact);
   const runtimeDir = join(artifactDir, "runtime");
-  const assets = RUNTIME_DISTRIBUTIONS.map((distribution) => ({
+  const distributions = runtimeDistributions();
+  const assets = distributions.map((distribution) => ({
     source: join(REPO_ROOT, "dist-release", distribution),
     destination: join(runtimeDir, distribution),
   }));
@@ -1685,7 +1688,7 @@ function runtimeAssetsGate(artifact: string): GateResult {
     expected: assets.length,
     actual: assets.length - missing.length,
     detail: missing.length === 0
-      ? `complete ${RUNTIME_DISTRIBUTIONS.join(", ")} distributions staged`
+      ? `complete ${distributions.join(", ")} distributions staged`
       : `missing destinations: ${missing.join(", ")}`,
   };
 }
@@ -2095,12 +2098,23 @@ function main(): void {
   try {
     const targets = selectedTargets(process.argv.slice(2));
 
+    const packageBuild = run(process.execPath, ["scripts/package.ts"], {
+      cwd: REPO_ROOT,
+      timeoutMs: 300_000,
+    });
+    if (packageBuild.status !== 0 || packageBuild.error) {
+      console.error("package regeneration failed before binary build");
+      const output = tail(`${packageBuild.stdout}${packageBuild.stderr}`);
+      if (output) console.error(output);
+      process.exitCode = 1;
+      return;
+    }
     const packageCheck = run(process.execPath, ["scripts/package.ts", "--check"], {
       cwd: REPO_ROOT,
       timeoutMs: 300_000,
     });
     if (packageCheck.status !== 0 || packageCheck.error) {
-      console.error("package drift guard failed; run bun scripts/package.ts before building binaries");
+      console.error("package determinism guard failed");
       const output = tail(`${packageCheck.stdout}${packageCheck.stderr}`);
       if (output) console.error(output);
       process.exitCode = 1;

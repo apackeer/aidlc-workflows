@@ -13,6 +13,7 @@ import {
   existsSync,
   mkdirSync,
   mkdtempSync,
+  readdirSync,
   readFileSync,
   rmSync,
   symlinkSync,
@@ -21,6 +22,7 @@ import {
 import { tmpdir } from "node:os";
 import { dirname, join, relative } from "node:path";
 import { fileURLToPath } from "node:url";
+import { targetTriple } from "../../core/tools/aidlc-install-paths.ts";
 import { AIDLC_VERSION } from "../../dist/claude/.claude/tools/aidlc-version.ts";
 
 const REPO_ROOT = join(dirname(fileURLToPath(import.meta.url)), "..", "..");
@@ -544,6 +546,66 @@ describe("t238 build-binaries release builder", () => {
       rmSync(installFixture, { recursive: true, force: true });
     }
   }, 300_000);
+
+  test("package-release emits one asset when native and the explicit host target match", () => {
+    const root = mkdtempSync(join(tmpdir(), "aidlc-t238-release-dedupe-"));
+    try {
+      const binaries = join(root, "binaries");
+      const output = join(root, "release");
+      const hostTarget = targetTriple();
+      const binaryName = process.platform === "win32" ? "aidlc.exe" : "aidlc";
+      const bytes = Buffer.from("identical host binary\n", "utf-8");
+      for (const directoryName of ["native", hostTarget]) {
+        const directory = join(binaries, directoryName);
+        mkdirSync(directory, { recursive: true });
+        writeFileSync(join(directory, binaryName), bytes);
+      }
+
+      const packaged = spawnSync(
+        BUN,
+        [
+          PACKAGE_RELEASE_SCRIPT,
+          "--binaries",
+          binaries,
+          "--output",
+          output,
+        ],
+        {
+          cwd: REPO_ROOT,
+          encoding: "utf-8",
+          timeout: 180_000,
+          env: { ...process.env, SOURCE_DATE_EPOCH: "1784246400" },
+        },
+      );
+      expect(
+        packaged.status,
+        `${packaged.stdout ?? ""}${packaged.stderr ?? ""}`,
+      ).toBe(0);
+
+      const manifest = JSON.parse(
+        readFileSync(join(output, "version.json"), "utf-8"),
+      ) as {
+        assets: Array<{ name: string; kind: string; target?: string }>;
+      };
+      const binaryAssets = manifest.assets.filter((asset) => asset.kind === "binary");
+      const expectedName =
+        `aidlc-${hostTarget}${process.platform === "win32" ? ".exe" : ""}`;
+      expect(binaryAssets).toEqual([
+        expect.objectContaining({
+          name: expectedName,
+          target: hostTarget,
+        }),
+      ]);
+      expect(new Set(manifest.assets.map((asset) => asset.name)).size).toBe(
+        manifest.assets.length,
+      );
+      expect(readdirSync(output).filter((name) => name === expectedName)).toEqual([
+        expectedName,
+      ]);
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  }, 180_000);
 
   test("fake entry with wrong version proves the mandatory version gate can fail", () => {
     const root = mkdtempSync(join(tmpdir(), "aidlc-t238-"));

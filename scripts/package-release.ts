@@ -40,6 +40,52 @@ function outputName(target: string, source: string): string {
   return `aidlc-${normalized}${source.endsWith(".exe") ? ".exe" : ""}`;
 }
 
+type BinaryInput = {
+  directoryName: string;
+  target: string;
+  source: string;
+  bytes: number;
+  sha256: string;
+};
+
+function binaryInputs(binaries: string): BinaryInput[] {
+  const byTarget = new Map<string, BinaryInput>();
+  for (const directoryName of readdirSync(binaries).sort()) {
+    if (directoryName.startsWith("build-results")) continue;
+    const directory = join(binaries, directoryName);
+    if (!statSync(directory).isDirectory()) continue;
+    const candidates = ["aidlc", "aidlc.exe"]
+      .map((name) => join(directory, name))
+      .filter(existsSync);
+    if (candidates.length !== 1) {
+      throw new Error(`${directory}: expected one aidlc binary`);
+    }
+    const source = candidates[0];
+    const input: BinaryInput = {
+      directoryName,
+      target: directoryName === "native" ? targetTriple() : directoryName,
+      source,
+      bytes: statSync(source).size,
+      sha256: digest(source),
+    };
+    const existing = byTarget.get(input.target);
+    if (!existing) {
+      byTarget.set(input.target, input);
+      continue;
+    }
+    if (existing.bytes !== input.bytes || existing.sha256 !== input.sha256) {
+      throw new Error(
+        `duplicate binary target ${input.target} differs between ` +
+          `${existing.directoryName}/ and ${input.directoryName}/`,
+      );
+    }
+    if (existing.directoryName === "native" && input.directoryName !== "native") {
+      byTarget.set(input.target, input);
+    }
+  }
+  return [...byTarget.values()].sort((a, b) => a.target.localeCompare(b.target));
+}
+
 function buildVerification(
   binaries: string,
   target: string,
@@ -104,11 +150,20 @@ function build(argv: string[]): void {
   const output = valueAfter(argv, "--output") || join(REPO_ROOT, "build", "release");
   const binaries = valueAfter(argv, "--binaries") || join(REPO_ROOT, "build", "binaries");
   const requireReleaseMatrix = argv.includes("--require-release-matrix");
+  const regenerate = spawnSync("bun", [join(REPO_ROOT, "scripts", "package.ts")], {
+    cwd: REPO_ROOT,
+    encoding: "utf-8",
+  });
+  if (regenerate.status !== 0) {
+    throw new Error(`package regeneration failed\n${regenerate.stderr}`);
+  }
   const check = spawnSync("bun", [join(REPO_ROOT, "scripts", "package.ts"), "--check"], {
     cwd: REPO_ROOT,
     encoding: "utf-8",
   });
-  if (check.status !== 0) throw new Error(`package drift guard failed\n${check.stderr}`);
+  if (check.status !== 0) {
+    throw new Error(`package determinism guard failed\n${check.stderr}`);
+  }
   rmSync(output, { recursive: true, force: true });
   mkdirSync(output, { recursive: true });
   const assets: ReleaseAsset[] = [];
@@ -152,25 +207,23 @@ function build(argv: string[]): void {
     kind: "runtime",
   });
 
-  for (const target of readdirSync(binaries).sort()) {
-    if (target.startsWith("build-results")) continue;
-    const directory = join(binaries, target);
-    if (!statSync(directory).isDirectory()) continue;
-    const candidates = ["aidlc", "aidlc.exe"].map((name) => join(directory, name)).filter(existsSync);
-    if (candidates.length !== 1) throw new Error(`${directory}: expected one aidlc binary`);
-    const source = candidates[0];
-    const bytes = statSync(source).size;
-    const verification = buildVerification(binaries, target, bytes, requireReleaseMatrix);
-    const name = outputName(target, source);
+  for (const input of binaryInputs(binaries)) {
+    const verification = buildVerification(
+      binaries,
+      input.directoryName,
+      input.bytes,
+      requireReleaseMatrix,
+    );
+    const name = outputName(input.target, input.source);
     const path = join(output, name);
-    copyFileSync(source, path);
+    copyFileSync(input.source, path);
     chmodSync(path, 0o755);
     assets.push({
       name,
-      sha256: digest(path),
-      bytes,
+      sha256: input.sha256,
+      bytes: input.bytes,
       kind: "binary",
-      target: target === "native" ? targetTriple() : target,
+      target: input.target,
       ...(verification ? { verification } : {}),
     });
   }
