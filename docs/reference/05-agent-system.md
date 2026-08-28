@@ -8,11 +8,11 @@ For user-facing agent descriptions, see the [User Guide -- Agents](../guide/06-a
 
 ## Agent Structure
 
-Each agent is a flat `.md` file in `.claude/agents/` with YAML frontmatter followed by a markdown body. The conductor reads these files to frame its perspective during inline stage execution or to build context for subagent delegation.
+Each authored agent is a flat `.md` file in `core/agents/` with YAML frontmatter followed by a markdown body. The packager projects those personas into each harness's agent surface; the conductor reads the projected files to frame inline work or delegated execution.
 
 ### Frontmatter Contract
 
-Every agent file must include this YAML frontmatter:
+Every authored core agent file must include this YAML frontmatter:
 
 ```yaml
 ---
@@ -30,8 +30,13 @@ tier: judgment                      # judgment | balanced | templated (see Agent
 | `name` | Yes | Agent identifier, must match filename |
 | `description` | Yes | Brief role summary |
 | `tools` | No | Optional allowlist; omit to inherit the full session toolset. Listing it narrows the agent and drops inherited MCP tools unless `mcp__<server>__<tool>` ids are also listed |
-| `disallowedTools` | Yes | Must include `Task` -- only the conductor delegates |
+| `disallowedTools` | Yes in authored core | Must include `Task` -- only the conductor delegates. The packager removes or translates this Claude-dialect key when a harness uses a different native tool-policy surface |
 | `tier` | Yes | `judgment`, `balanced`, or `templated`. The AUTHORED dial: the packager projects it into each harness's native model/effort keys (see Agent Tiers below). Raw `model:`/`effort:` never appear in authored frontmatter -- they are projection OUTPUTS in the ignored local `dist/<harness>/` tree and versioned release runtime. |
+
+Kiro IDE projects this core contract differently: it removes
+`disallowedTools`, adds `tools: ["read", "write", "shell"]`, and adds
+capability-scoped `permissions.rules`. Omitting `subagent` from `tools:` carries
+the same no-nested-delegation constraint in the IDE's native vocabulary.
 
 ### Markdown Body Sections
 
@@ -39,21 +44,20 @@ Below the frontmatter, the markdown body defines:
 
 | Section | Purpose |
 |---------|---------|
-| **Core Responsibilities** | What the agent does in each of its owned stages |
-| **Stages Owned** | Lead and supporting stage assignments |
+| **Core Responsibilities** | What the agent does |
 | **Collaboration** | Receives from / Works with / Hands off to |
-| **Knowledge Loading** | The 6-step loading order (see [Knowledge System](10-knowledge-system.md)) |
+| **Memory Focus** | Agent-specific memory topics to consult when relevant |
 | **Key Principles** | Behavioral guidelines for the agent |
 
 ---
 
 ## Shared Configuration
 
-All 14 agents share a common configuration baseline. None declares a `tools:` allowlist, so every agent inherits the **full session toolset** — all of Claude Code's built-in tools plus any MCP tools provisioned to the session. The one shipped restriction is `disallowedTools: Task`.
+All 14 authored agents share a common configuration baseline. On Claude Code, none declares a `tools:` allowlist, so every agent inherits the **full session toolset** plus provisioned MCP tools, with `disallowedTools: Task` as the shipped denial. Other harnesses project that intent into native surfaces: Kiro agent Markdown omits `disallowedTools`, Kiro CLI delegate JSON omits `subagent` from `tools`, and Kiro IDE delegate `tools:` grants likewise exclude delegation.
 
-### The session toolset (inherited by every agent)
+### The Claude Code session toolset
 
-Every agent inherits the built-in Claude Code tools, including:
+Every Claude Code agent inherits the built-in tools, including:
 
 | Tool | Purpose |
 |------|---------|
@@ -68,11 +72,11 @@ Every agent inherits the built-in Claude Code tools, including:
 
 | Tool | Reason |
 |------|--------|
-| Task | Agents operate as delegated workers. Only the SKILL.md conductor performs the Task call. `disallowedTools: Task` avoids cascading subagent chains. |
+| Task | Agents operate as delegated workers. Only the SKILL.md conductor performs the Task call. Claude enforces `disallowedTools: Task`; other harnesses use their native deny/allowlist equivalent. |
 
 ### Tools each persona is expected to exercise
 
-Every agent *can* reach Bash and WebSearch by inheritance; the table records which personas the methodology **expects** to use them in their stage work, not a per-agent grant. To genuinely restrict a persona, add an optional `tools:` allowlist (which drops inherited MCP unless `mcp__<server>__<tool>` ids are also listed) — this implementation ships no such restrictions.
+On Claude Code, every agent *can* reach Bash and WebSearch by inheritance; the table records which personas the methodology **expects** to use them in their stage work, not a per-agent grant. To genuinely restrict a Claude persona, add an optional `tools:` allowlist (which drops inherited MCP unless `mcp__<server>__<tool>` ids are also listed).
 
 | Tool | Expected to exercise it |
 |------|---------------------|
@@ -91,7 +95,7 @@ The authored dial on every agent is `tier:` -- it names the KIND of work the per
 
 The projection per harness (`core/tools/aidlc-tiers.ts` is the single source of truth):
 
-| Tier | Claude Code (.md frontmatter) | Codex CLI (.toml) | Kiro CLI/IDE (agent JSON `"model"`, CLI / `.md` frontmatter `model:`, IDE) | Kiro cli.json `chat.modelDefaults` | opencode (.md frontmatter) | Copilot (.md frontmatter) | Cursor (.md frontmatter) |
+| Tier | Claude Code (.md frontmatter) | Codex CLI (.toml) | Kiro CLI agent JSON / Kiro IDE `.md` | Kiro CLI cli.json `chat.modelDefaults` | opencode (.md frontmatter) | Copilot (.md frontmatter) | Cursor (.md frontmatter) |
 |------|-------------------------------|-------------------|--------------------------------------|-------------------------------------|-----------------------------|-----------------------------|--------------------------|
 | `judgment` | `model: inherit`, no `effort:` line | no `model`/`model_reasoning_effort` keys (config.toml session defaults apply) | field OMITTED (schema fallback: the user's default model) | no tier entry | no `model:`/`variant:` keys (opencode.json session defaults apply) | omitted (inherits session model) | `model:` OMITTED (inherits the session model) |
 | `balanced` | `model: sonnet`, `effort: medium` | `model = "openai.gpt-5.6-terra"`, `model_reasoning_effort = "medium"` | field OMITTED (see below) | no tier entry | `model: amazon-bedrock/global.anthropic.claude-sonnet-4-6`, `variant: medium` | omitted (inherits session model) | `model:` OMITTED (see below) |
@@ -136,8 +140,8 @@ access grant.
 | aidlc-product-agent | No | Yes | judgment | 5 | 3 | 8 |
 | aidlc-design-agent | No | Yes | judgment | 2 | 2 | 4 |
 | aidlc-delivery-agent | No | No | templated | 3 | 2 | 5 |
-| aidlc-architect-agent | No | No | judgment | 6 | 3 | 9 |
-| aidlc-aws-platform-agent | Yes | No | judgment | 2 | 4 | 6 |
+| aidlc-architect-agent | No | No | judgment | 7 | 3 | 10 |
+| aidlc-aws-platform-agent | Yes | No | judgment | 2 | 5 | 7 |
 | aidlc-compliance-agent | No | Yes | judgment | 0 | 4 | 4 |
 | aidlc-devsecops-agent | Yes | No | judgment | 0 | 5 | 5 |
 | aidlc-developer-agent | Yes | No | judgment | 2 | 4 | 6 |
@@ -146,7 +150,7 @@ access grant.
 | aidlc-operations-agent | Yes | No | templated | 3 | 0 | 3 |
 
 **Observations:**
-- aidlc-architect-agent has the broadest stage involvement (9 stages across 3 phases).
+- aidlc-architect-agent has the broadest stage involvement (10 stages across 3 phases).
 - Across the full 14-agent roster, nine agents carry the `judgment` tier, three carry the inheriting `templated` tier, and only the two `balanced` reviewers step down on Claude Code, Codex, and opencode. On Kiro, Cursor, and Copilot all tiers inherit the session model and effort. The matrix above covers the 11 domain-expert agents.
 - aidlc-compliance-agent operates purely in an advisory capacity (4 support stages, no lead stages).
 - Six of 11 agents are expected to use Bash for CLI interaction.
@@ -191,7 +195,7 @@ Agent display names and example knowledge files are authoritative in each agent'
 - **Change tools**: Add or edit a `tools:` allowlist in frontmatter to narrow the agent; omit it to inherit the full session toolset. A `tools:` list drops inherited MCP tools unless the `mcp__<server>__<tool>` ids are also listed.
 - **Change tier**: Edit `tier:` to `judgment`, `balanced`, or `templated` and regenerate (`bun scripts/package.ts`). To force a specific model on ONE agent in an installed project instead, edit the projected `model:` in its harness agent file (Claude Code accepts aliases, full ids, and `inherit`).
 - **Change behavior**: Edit the markdown body sections (responsibilities, principles).
-- **Change stage assignments**: Edit both the agent file (Stages Owned section) and the relevant stage files (`core/aidlc-common/stages/`), then regenerate with `bun scripts/package.ts` — the compiled stage graph is derived from stage frontmatter, never hand-edited.
+- **Change stage assignments**: Edit `lead_agent` / `support_agents` in the relevant stage files (`core/aidlc-common/stages/`), then regenerate with `bun scripts/package.ts` — the compiled stage graph is derived from stage frontmatter, never hand-edited.
 
 ---
 

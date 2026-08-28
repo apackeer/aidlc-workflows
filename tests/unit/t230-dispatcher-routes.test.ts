@@ -46,6 +46,7 @@ import {
   seededRecordDir,
   seededStateFile,
 } from "../harness/fixtures.ts";
+import { setupTuiProject } from "../harness/tui-fixtures.ts";
 
 const REPO_ROOT = join(dirname(fileURLToPath(import.meta.url)), "..", "..");
 const BUN = process.execPath;
@@ -147,6 +148,42 @@ function makeProject(): string {
     join(dataDir, "aidlc-stamp.json"),
   );
   tempProjects.add(project);
+  return project;
+}
+
+function makeUnselectedKiroProject(): string {
+  const project = setupTuiProject({
+    harness: "kiro",
+    withState: "state-mid-ideation.md",
+  });
+  tempProjects.add(project);
+  const utility = join(project, ".kiro", "tools", "aidlc-utility.ts");
+  const created = run(
+    [
+      BUN,
+      utility,
+      "intent-create",
+      "--scope",
+      "poc",
+      "--label",
+      "second fixture",
+      "--project-dir",
+      project,
+    ],
+    project,
+  );
+  expect(created.exitCode, created.stderr.toString()).toBe(0);
+  rmSync(
+    join(
+      project,
+      "aidlc",
+      "spaces",
+      "default",
+      "intents",
+      "active-intent",
+    ),
+    { force: true },
+  );
   return project;
 }
 
@@ -436,6 +473,20 @@ describe("t230 dispatcher route parity", () => {
       routerArgs: ["config"],
       tool: "aidlc-init.ts",
       toolArgs: ["config"],
+    },
+    {
+      name: "plugin validate maps to plugin-validate",
+      routerArgs: ["plugin", "validate", ".", "--json"],
+      tool: "aidlc-utility.ts",
+      toolArgs: ["plugin-validate", ".", "--json"],
+      fixture: true,
+    },
+    {
+      name: "plugin build maps to plugin-build",
+      routerArgs: ["plugin", "build", "claude", "out", "--plugin-root", "."],
+      tool: "aidlc-utility.ts",
+      toolArgs: ["plugin-build", "claude", "out", "--plugin-root", "."],
+      fixture: true,
       fixture: true,
     },
     {
@@ -740,6 +791,29 @@ describe("t230 dispatcher global flag translation", () => {
     });
   });
 
+  test("places global --project-dir before the literal task delimiter", () => {
+    expect(
+      resolveAction(["--project-dir", "/tmp/example", "compose", "--", "--scope", "migration"]),
+    ).toEqual({
+      type: "delegate",
+      tool: "aidlc-orchestrate.ts",
+      args: [
+        "next",
+        "compose",
+        "--project-dir",
+        "/tmp/example",
+        "--",
+        "--scope",
+        "migration",
+      ],
+    });
+    expect(resolveAction(["compose", "--", "--project-dir", "/tmp/literal"])).toEqual({
+      type: "delegate",
+      tool: "aidlc-orchestrate.ts",
+      args: ["next", "compose", "--", "--project-dir", "/tmp/literal"],
+    });
+  });
+
   test("carries --project-dir into routing-only actions", () => {
     const projectDir = "/tmp/routed-project";
     for (const action of [
@@ -915,6 +989,29 @@ describe("t230 dispatcher dev and compiled in-process modes", () => {
     expect(discoverProjectHarnesses(projectDir).map((item) => item.distribution))
       .toEqual(["claude", "codex", "opencode"]);
     expect(runtimeHarnessDir(projectDir)).toBe(".claude");
+  });
+
+  test("compiled main pins the Kiro harness name before unselected routing", () => {
+    const projectDir = makeUnselectedKiroProject();
+    const compiled = viaImportedCompiledMain(
+      [
+        "next",
+        "poc",
+        "Create a tiny TypeScript command-line program that prints Hello World.",
+        "--project-dir",
+        projectDir,
+      ],
+      projectDir,
+    );
+    expect(compiled.exitCode, compiled.stderr.toString()).toBe(0);
+    const directive = JSON.parse(compiled.stdout.toString()) as {
+      kind?: string;
+      ask_type?: string;
+      available_intents?: string[];
+    };
+    expect(directive.kind).toBe("ask");
+    expect(directive.ask_type).toBe("new-work-routing");
+    expect(directive.available_intents).toHaveLength(2);
   });
 });
 

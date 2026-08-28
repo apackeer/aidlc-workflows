@@ -106,6 +106,10 @@ then use the ignored local `dist/copilot/` output.
 - **Questions render as numbered prose options.** Although both surfaces expose
   native picker tools, picker answers return as tool results and do not fire
   the trusted `UserPromptSubmit` event required by the human-presence guard.
+  While the session-selected workflow has valid `Status: Running` state, the
+  matcher-free PreToolUse guard denies those picker calls and directs the model
+  to render numbered prose and end the turn; without a running workflow,
+  including completed or unusable state, it leaves native pickers untouched.
   The human's next chat message does; the questions FILE with `[Answer]:` tags
   stays the source of truth.
 - **Hooks enforce natively.** The adapter
@@ -129,19 +133,16 @@ then use the ignored local `dist/copilot/` output.
   argv the shell will eventually produce. Direct-looking compounds are refused. An
   explicit `--project-dir` outside the current physical project is refused
   before current-project coordination is written.
-- **The engine owns continuation replay.** For an exact-context,
-  non-sessionless marker in a current installation whose authored
-  `tools/data/harness.json` names `copilot`, `continue` validates the native
-  token first, builds the successor, then atomically compares the full token
-  digest and publishes the successor before stdout. Concurrent uses have one
-  winner. Missing, malformed, v1, stale, and `sessionless:` markers retain the
-  existing stateless behavior. Replacing Copilot with another harness also
-  restores that harness's stateless behavior even if an old Copilot marker is
-  still present. On a stable non-Copilot installation, a contended marker
-  publication cannot deny a revalidated stateless continuation: the engine
-  returns the prepared directive and records the dropped best-effort marker
-  update instead. Replacing an installed harness while one of its commands is
-  executing is not a supported upgrade path.
+- **The engine owns continuation replay on every harness.** Copilot uses the
+  same record-local, atomic single-use cursor as Claude, Codex, Cursor, Kiro,
+  Kiro IDE, and opencode. Native token validation runs first; the engine then
+  compares the complete token SHA-256 and publishes the exact successor before
+  stdout under the active-directive lock. Copilot's session ownership and
+  delivery evidence enrich that marker but do not own replay. Missing,
+  malformed, v1, and pre-shared markers recover once inside the same
+  transaction; a fresh `next` resets the cursor. See the shared cursor contract
+  in the Developer Reference for crash, migration, rollback, and filesystem
+  limits.
 - **Stop preserves the current delivered Copilot directive.** An exact host
   `tool_use_id`, or the adapter ID carried through rewritten engine input and
   returned by PostToolUse, can settle delivery for session-scoped Stop and
@@ -150,11 +151,11 @@ then use the ignored local `dist/copilot/` output.
   delivery; correlation loss does not create a permanent deny. Once a claim is
   attempted, project, state, or session ownership rejection is an explicit deny:
   another session cannot execute the owner's current token as untracked work.
-- **Resume and conversation waits are session-scoped.** Stop allows a pending
-  Resume question or a genuine conversational response to end cleanly. A
-  foreign Copilot session cannot answer or advance that wait with bare `next`;
-  explicit `next --resume` reissues the choice. Prompt text and rules content
-  are not persisted in the coordination marker.
+- **Legacy Resume and conversation waits are session-scoped.** Stop allows a
+  genuine conversational response to end cleanly. A Resume marker written by a
+  pre-2.6.19 installation remains owner-scoped; explicit `next --resume`
+  supersedes it and continues directly. Prompt text and rules content are not
+  persisted in the coordination marker.
 - **Host evidence is intentionally bounded.** Rewriting and carried-ID echo
   were live-verified on Copilot CLI 1.0.79 on macOS in noninteractive mode.
   VS Code's `tool_use_id`, `updatedInput`, and `tool_response` path is covered

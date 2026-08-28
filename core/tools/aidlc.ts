@@ -25,6 +25,7 @@ import {
   isCompiledExecutable,
   packagedDistributionRoot,
   runtimeHarnessDir,
+  runtimeHarnessName,
 } from "./aidlc-runtime-paths.ts";
 
 type Classification = "passthrough" | "translation" | "stub" | "routing-only" | "help";
@@ -127,6 +128,7 @@ export const TOOLS = {
   plugin: "aidlc-plugin.ts",
   runnerGen: "aidlc-runner-gen.ts",
   runtime: "aidlc-runtime.ts",
+  reviewBrief: "aidlc-review-brief.ts",
   sensor: "aidlc-sensor.ts",
   sensorClaimSources: "aidlc-sensor-claim-sources.ts",
   sensorLinter: "aidlc-sensor-linter.ts",
@@ -136,6 +138,7 @@ export const TOOLS = {
   sensorUpstreamCoverage: "aidlc-sensor-upstream-coverage.ts",
   state: "aidlc-state.ts",
   swarm: "aidlc-swarm.ts",
+  unit: "aidlc-unit.ts",
   utility: "aidlc-utility.ts",
   validate: "aidlc-validate.ts",
   worktree: "aidlc-worktree.ts",
@@ -152,6 +155,8 @@ const SENSOR_WORKERS = [
 ] as const;
 
 export const SLASH_FLAG_ALIASES: readonly Alias[] = [
+  { from: "--claim", to: "unit claim", irregular: true },
+  { from: "--release", to: "unit release", irregular: true },
   { from: "--status", to: "status" },
   { from: "--doctor", to: "doctor" },
   { from: "--help", to: "help" },
@@ -203,7 +208,7 @@ export const ROUTES: readonly Route[] = [
     group: "top",
     kind: "top-passthrough",
     classification: "passthrough",
-    verbs: ["next", "continue", "report", "park"],
+    verbs: ["next", "continue", "report", "park", "team-board"],
     tool: TOOLS.orchestrate,
     ...PUBLIC_ENGINE,
     namespace: "public",
@@ -212,7 +217,44 @@ export const ROUTES: readonly Route[] = [
       { command: "report [args]", summary: "render the orchestrator report" },
       { command: "park [args]", summary: "park the current workflow" },
     ],
-    all: ["next [args]", "continue <token>", "report [args]", "park [args]"],
+    all: [
+      "next [args]",
+      "continue <token>",
+      "report [args]",
+      "park [args]",
+      "team-board [--snapshot]",
+    ],
+  },
+  {
+    id: "unit",
+    group: "unit",
+    kind: "noun-passthrough",
+    classification: "passthrough",
+    verbs: [
+      "adopt",
+      "claim",
+      "gate",
+      "land",
+      "merge-status",
+      "participate",
+      "pin",
+      "publish",
+      "release",
+      "status",
+    ],
+    tool: TOOLS.unit,
+    all: [
+      "unit adopt <unit>",
+      "unit claim <unit>",
+      "unit gate <unit> --decision <approve|reject> --user-input <text>",
+      "unit land <unit> [--step git|state|audit|all] [--target <branch>] [--accept-released-attempt --user-input <text>]",
+      "unit merge-status <unit>",
+      "unit participate",
+      "unit pin <unit>",
+      "unit publish <unit>",
+      "unit release <unit>",
+      "unit status",
+    ],
   },
   {
     id: "top-compose",
@@ -510,6 +552,8 @@ export const ROUTES: readonly Route[] = [
       "lookup",
       "practices-event",
       "practices-promote",
+      "set-unit-ownership",
+      "set-unit-gate-rhythm",
       "fork",
       "merge",
       "park",
@@ -671,7 +715,7 @@ export const ROUTES: readonly Route[] = [
     group: "log",
     kind: "noun-passthrough",
     classification: "passthrough",
-    verbs: ["decision", "answer", "review"],
+    verbs: ["decision", "answer", "review", "link"],
     tool: TOOLS.log,
     ...HIDDEN_ENGINE,
   },
@@ -782,17 +826,25 @@ export const ROUTES: readonly Route[] = [
     group: "plugin",
     kind: "custom",
     classification: "translation",
-    verbs: ["select", "sync", "list"],
+    verbs: ["select", "sync", "list", "validate", "build"],
     custom: "plugin",
     ...PUBLIC_ENGINE,
     visibility: "hidden",
-    targets: { select: "select-plugins", sync: "sync", list: "list" },
+    targets: {
+      select: "select-plugins",
+      sync: "sync",
+      list: "list",
+      validate: "plugin-validate",
+      build: "plugin-build",
+    },
     human: [
       { command: "plugin select [names]", summary: "set enabled plugins" },
       { command: "plugin list [--verbose|--json]", summary: "compare installed and composed plugins" },
       { command: "plugin sync [--prune-missing]", summary: "transactionally compose installed plugins" },
+      { command: "plugin validate [path]", summary: "validate an authored plugin" },
+      { command: "plugin build <harness> [outDir]", summary: "build an authored plugin for a harness" },
     ],
-    all: ["select [names]", "sync [--prune-missing] [--yes]", "list [--verbose] [--json]"],
+    all: ["select [names]", "sync [--prune-missing] [--yes]", "list [--verbose] [--json]", "validate [path]", "build <harness> [outDir]"],
   },
   {
     // The DocumentKB noun. Unlike `plugin`, the verb IS the subcommand -- these
@@ -814,7 +866,7 @@ export const ROUTES: readonly Route[] = [
     // this literal, because reading the route is exactly what missed it.
     kind: "noun-passthrough",
     classification: "passthrough",
-    verbs: ["onboard", "sync", "list", "show", "associate", "dissociate", "rebind"],
+    verbs: ["onboard", "sync", "list", "show", "associate", "dissociate", "rebind", "summarize"],
     tool: TOOLS.knowledge,
     ...PUBLIC_ENGINE,
     // ONE line in the human help, which is capped at 20 lines: it is a summary
@@ -827,6 +879,7 @@ export const ROUTES: readonly Route[] = [
       "onboard [path]", "sync", "list", "show <id>",
       "associate <id> --intent [slug]", "dissociate <id> --intent [slug]",
       "rebind <id> --to <path>",
+      "summarize <id> --text-file <path> --source-revision <sha256>",
     ],
   },
   {
@@ -845,14 +898,35 @@ export const ROUTES: readonly Route[] = [
     group: "workspace",
     kind: "noun-map",
     classification: "translation",
-    verbs: ["detect", "codekb", "codekb-scope-diff"],
+    verbs: [
+      "detect",
+      "codekb",
+      "codekb-scope-diff",
+      "codekb-snapshot",
+      "codekb-publish",
+      "project-description",
+      "document-input",
+    ],
     tool: TOOLS.utility,
     ...HIDDEN_ENGINE,
     targets: {
       detect: "detect",
       codekb: "codekb-path",
       "codekb-scope-diff": "codekb-scope-diff",
+      "codekb-snapshot": "codekb-snapshot",
+      "codekb-publish": "codekb-publish",
+      "project-description": "project-description",
+      "document-input": "document-input",
     },
+  },
+  {
+    id: "review-brief",
+    group: "review-brief",
+    kind: "noun-passthrough",
+    classification: "passthrough",
+    verbs: ["review", "context", "summary"],
+    tool: TOOLS.reviewBrief,
+    ...HIDDEN_ENGINE,
   },
   {
     id: "workspace-sync",
@@ -1482,6 +1556,8 @@ function resolveAlias(argv: string[], engineNamespace = false): Action | undefin
       : topLevelError(argv.slice(0, 2).join(" "));
   }
   if (head === "--status") return { type: "delegate", tool: TOOLS.utility, args: ["status", ...argv.slice(1)] };
+  if (head === "--claim") return { type: "delegate", tool: TOOLS.utility, args: ["claim", ...argv.slice(1)] };
+  if (head === "--release") return { type: "delegate", tool: TOOLS.utility, args: ["release", ...argv.slice(1)] };
   if (head === "--doctor") return { type: "delegate", tool: TOOLS.doctor, args: ["doctor", ...argv.slice(1)] };
   if (head === "--version") return { type: "version", json: false };
   if (head === "--resume") return { type: "delegate", tool: TOOLS.orchestrate, args: ["next", "--resume", ...argv.slice(1)] };
@@ -1629,12 +1705,21 @@ export function resolveAction(argv: string[]): Action {
   const clean: string[] = [];
   const globalFlags: string[] = [];
   let projectDir: string | undefined;
+  let literalArgs = false;
   for (let i = 0; i < argv.length; i++) {
-    if (["--json", "--quiet", "--no-color", "--yes", "--offline", "--verbose"].includes(argv[i])) {
+    if (argv[i] === "--") {
+      literalArgs = true;
+      clean.push(argv[i]);
+      continue;
+    }
+    if (
+      !literalArgs &&
+      ["--json", "--quiet", "--no-color", "--yes", "--offline", "--verbose"].includes(argv[i])
+    ) {
       globalFlags.push(argv[i]);
       continue;
     }
-    if (argv[i] !== "--project-dir") {
+    if (literalArgs || argv[i] !== "--project-dir") {
       clean.push(argv[i]);
       continue;
     }
@@ -1665,7 +1750,9 @@ export function resolveAction(argv: string[]): Action {
       ? projectDir
       : resolve(process.cwd(), projectDir);
     if (action.type === "delegate") {
-      action.args.push("--project-dir", absoluteProjectDir);
+      const delimiter = action.args.indexOf("--");
+      if (delimiter >= 0) action.args.splice(delimiter, 0, "--project-dir", absoluteProjectDir);
+      else action.args.push("--project-dir", absoluteProjectDir);
     } else if (action.type === "hook") {
       action.projectDir = absoluteProjectDir;
       action.path = resolveHookPath(`aidlc-${action.name}.ts`, undefined, absoluteProjectDir);
@@ -1774,6 +1861,8 @@ async function loadDelegate(tool: string): Promise<DelegateModule | null> {
       return import("./aidlc-sensor-upstream-coverage.ts");
     case TOOLS.state:
       return import("./aidlc-state.ts");
+    case TOOLS.unit:
+      return import("./aidlc-unit.ts");
     case TOOLS.swarm:
       return import("./aidlc-swarm.ts");
     case TOOLS.utility:
@@ -1922,7 +2011,9 @@ async function runAdapter(action: Extract<Action, { type: "adapter" }>): Promise
       action.target === "log-subagent" ||
       action.target === "rebuild-stage-graph" ||
       action.target === "session-start" ||
-      action.target === "continue-workflow"
+      action.target === "continue-workflow" ||
+      action.target === "verb-intercept" ||
+      action.target === "terminal-command-guard"
     ) {
       // Mirror the adapter entry point's dual-generation channel contract.
       // IDE 0.12 provides USER_PROMPT and leaves stdin open forever, so consume
@@ -2324,13 +2415,19 @@ export async function main(argv: string[]): Promise<void> {
     text(1, renderCommandHelp(commandHelp));
     return;
   }
-  if (isCompiledExecutable() && !process.env.AIDLC_HARNESS_DIR) {
+  if (isCompiledExecutable()) {
     // Compiled, no explicit harness: discover the project install from its
     // shipped stamp/harness metadata. Module-relative derivation cannot work
-    // from $bunfs, and every delegate and sibling tool reads this env, so pin
-    // the discovered answer once here. Falls back to .claude when no install
-    // is present.
-    process.env.AIDLC_HARNESS_DIR = runtimeHarnessDir();
+    // from $bunfs, and embedded data may be Claude-flavoured. Every delegate
+    // and sibling tool reads these envs, so pin both identifiers once here,
+    // before lazy delegate imports, so same-directory harnesses retain
+    // identity. Falls back to .claude when no install is present.
+    if (!process.env.AIDLC_HARNESS_DIR) {
+      process.env.AIDLC_HARNESS_DIR = runtimeHarnessDir();
+    }
+    if (!process.env.AIDLC_HARNESS_NAME) {
+      process.env.AIDLC_HARNESS_NAME = runtimeHarnessName();
+    }
   }
   if (
     process.platform === "win32" &&

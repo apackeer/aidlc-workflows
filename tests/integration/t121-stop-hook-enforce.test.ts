@@ -1,4 +1,4 @@
-// covers: hook:aidlc-continue-workflow, function:refreshActiveDirectiveMarker, function:hasPendingDecision
+// covers: hook:aidlc-continue-workflow, function:refreshActiveDirectiveMarker, function:hasCurrentSharedResumeWait, function:hasPendingDecision
 //
 // Behavioural contract for the Stop hook `aidlc-continue-workflow.ts` — the framework's
 // FIRST flow-altering hook. Migrated from tests/integration/t121-stop-hook-enforce.sh
@@ -19,8 +19,9 @@
 //   :97  allowStop()       — emit nothing, exit 0 (the precedent non-blocking pattern)
 //   :104 blockStop(reason) — console.log({decision:"block",reason}); exit 0
 //   :129 guardFilePath()   — aidlc-docs/.aidlc-stop-hook/block-count.json
-//   :137 progressSignature(state) — `${Current-Stage}::${audit-line-count}`
-//   :204 decideBlock(state, stopHookActive) — the no-progress counter + cap logic:
+//   :247 progressSignature(state, directive) - Current Stage + state digest +
+//          directive position (kind/stage/Unit/part)
+//   :204 decideBlock(state, directive, stopHookActive) — the no-progress counter + cap logic:
 //          - sameSignature  → nextCount = prior.count + 1
 //          - prior===null && stopHookActive → nextCount = 2 (joining mid-flight)
 //          - else → nextCount = 1
@@ -106,6 +107,7 @@ import {
   seededRecordDir,
   seededStateFile,
 } from "../harness/fixtures.ts";
+import { writeSessionPidEntry } from "../../dist/claude/.claude/tools/aidlc-lib.ts";
 
 const BUN = process.execPath; // the bun running this test (mirrors t104)
 const REPO_ROOT = join(import.meta.dir, "..", "..");
@@ -126,12 +128,11 @@ const UTILITY_TS = join(
   "aidlc-utility.ts",
 );
 
-// P9 per-intent layout: the stop hook reads state (stateFilePath), the audit
-// (auditFilePath — its own resolved shard, for the progress-signature length),
-// the guard counter (stopHookDir → <record>/.aidlc-stop-hook/block-count.json),
-// and the current stage's canonical or per-unit memory/questions dir. All
-// re-root under the active intent's record. We PIN the clone-id so the hook
-// (subprocess) and progressSig (in-process) resolve the SAME audit shard.
+// P9 per-intent layout: the stop hook reads state (stateFilePath), the guard
+// counter (stopHookDir → <record>/.aidlc-stop-hook/block-count.json), and the
+// current stage's canonical or per-unit memory/questions dir. All re-root under
+// the active intent's record. We PIN the clone-id so audit fixtures resolve to
+// the same shard across the hook subprocess and this test process.
 const PINNED_CLONE_ID = "testcloneid121";
 function pinnedShardName(): string {
   const host =
@@ -225,6 +226,59 @@ function seedCopilotDirective(proj: string, kind = "run-stage", unit?: string): 
   );
 }
 
+function seedSessionlessResumeMarker(
+  proj: string,
+  kind: "ask" | "run-stage" = "ask",
+  stage = "requirements-analysis",
+): string {
+  const state = readFileSync(seededStateFile(proj), "utf-8");
+  const stateSha256 = createHash("sha256").update(state, "utf-8").digest("hex");
+  const projectSha256 = createHash("sha256").update(realpathSync(proj)).digest("hex");
+  const ownerSession = `sessionless:${projectSha256.slice(0, 16)}`;
+  const markerPath = join(seededRecordDir(proj), ".aidlc-active-directive.json");
+  writeFileSync(
+    markerPath,
+    `${JSON.stringify({
+      version: 2,
+      revision: 1,
+      project_sha256: projectSha256,
+      intent_uuid: "00000000-0000-7000-8000-000000000001",
+      state_present: true,
+      state_sha256: stateSha256,
+      owner_session: ownerSession,
+      owner_epoch: 0,
+      context_epoch: 0,
+      kind,
+      stage,
+      delivery: "issued",
+      needs_rehydrate: false,
+      active_attempt: {
+        id: "sessionless",
+        command_kind: "next",
+        command_sha256: stateSha256,
+        issued_state_sha256: stateSha256,
+        session_id: ownerSession,
+        owner_epoch: 0,
+        context_epoch: 0,
+        status: "settled",
+      },
+      resume: {
+        status: "waiting",
+        issuing_stage: stage,
+        issuing_state_sha256: stateSha256,
+        issuing_session: ownerSession,
+        issuing_intent_uuid: "00000000-0000-7000-8000-000000000001",
+      },
+      event_sequence: 0,
+      human_sequence: 0,
+      engine_sequence: 0,
+      conversation_sequence: 0,
+      stop_count: 0,
+    }, null, 2)}\n`,
+  );
+  return markerPath;
+}
+
 function rewriteCopilotMarker(proj: string, update: (marker: Record<string, unknown>) => void): void {
   const path = join(seededRecordDir(proj), ".aidlc-active-directive.json");
   const marker = JSON.parse(readFileSync(path, "utf-8")) as Record<string, unknown>;
@@ -259,13 +313,36 @@ try {
   const { join } = require("node:path");
   writeFileSync(
     join(import.meta.dir, "..", "..", ".probe-env-witness.json"),
-    JSON.stringify({ probe: process.env.AIDLC_STOP_HOOK_PROBE ?? null }),
+    JSON.stringify({
+      probe: process.env.AIDLC_STOP_HOOK_PROBE ?? null,
+      sessionOverride: process.env.AIDLC_SESSION_OVERRIDE ?? null,
+      sessionOverrideSource:
+        process.env.AIDLC_SESSION_OVERRIDE_SOURCE ?? null,
+    }),
     "utf-8",
   );
 } catch { /* the witness is diagnostic; never fail the mock over it */ }
 const kind = process.env.MOCK_KIND ?? "run-stage";
 const stage = process.env.MOCK_STAGE ?? "requirements-analysis";
 const unit = process.env.MOCK_UNIT ?? "";
+const part = Number(process.env.MOCK_PART ?? "1");
+const parts = Number(process.env.MOCK_PARTS ?? "2");
+const continueToken = process.env.MOCK_CONTINUE_TOKEN ?? "steering-token-495";
+const units = (process.env.MOCK_UNITS ?? "auth,billing").split(",").filter(Boolean);
+const wave = process.env.MOCK_WAVE ? JSON.parse(process.env.MOCK_WAVE) : undefined;
+if (process.env.MOCK_REWRITE_MARKER === "1") {
+  try {
+    const { readFileSync, writeFileSync } = require("node:fs");
+    const markerPath = process.env.MOCK_MARKER_PATH;
+    const marker = JSON.parse(readFileSync(markerPath, "utf-8"));
+    marker.revision = (marker.revision ?? 0) + 1;
+    marker.kind = kind;
+    marker.stage = stage;
+    if (unit) marker.unit = unit;
+    else delete marker.unit;
+    writeFileSync(markerPath, JSON.stringify(marker, null, 2) + "\\n", "utf-8");
+  } catch { /* opt-in marker publication is only a test witness */ }
+}
 if (kind === "done") {
   console.log(JSON.stringify({ kind: "done", reason: "Workflow complete." }));
 } else if (kind === "parked") {
@@ -277,16 +354,20 @@ if (kind === "done") {
   console.log(JSON.stringify({
     kind,
     stage,
+    part,
+    parts,
     rules_content: [
       {
         path: "aidlc/spaces/default/memory/org.md",
         text: "# Org Rules\\n\\nALWAYS preserve this exact stop-recovered policy.\\n",
       },
     ],
-    continue_token: "steering-token-495",
+    continue_token: continueToken,
   }));
+} else if (kind === "invoke-swarm") {
+  console.log(JSON.stringify({ kind, stage, units }));
 } else {
-  console.log(JSON.stringify({ kind, stage, ...(unit ? { unit } : {}) }));
+  console.log(JSON.stringify({ kind, stage, ...(unit ? { unit } : {}), ...(wave ? { wave } : {}) }));
 }
 process.exit(0);
 `;
@@ -307,8 +388,7 @@ function makeProject(): string {
   return proj;
 }
 
-/** Write the audit fixture into the pinned per-clone shard (the stop hook reads
- *  auditFilePath(projectDir) — that exact shard — for the progress signature). */
+/** Write the audit fixture into the pinned per-clone shard. */
 function seedAuditShard(proj: string, body = "audit row 1\n"): void {
   mkdirSync(seededAuditDir(proj), { recursive: true });
   writeFileSync(pinnedShardPath(proj), body, "utf-8");
@@ -317,19 +397,26 @@ function seedAuditShard(proj: string, body = "audit row 1\n"): void {
 function seedInteractionAudit(
   proj: string,
   events: Array<{
-    event: "DECISION_RECORDED" | "QUESTION_ANSWERED" | "STAGE_STARTED";
+    event:
+      | "DECISION_RECORDED"
+      | "QUESTION_ANSWERED"
+      | "STAGE_STARTED"
+      | "WORKFLOW_STARTED"
+      | "STAGE_JUMPED";
     stage: string;
+    unit?: string;
     workflow?: string;
   }>,
 ): void {
   const timestamp = "2026-08-03T18:57:53Z";
   const body = events
     .map(
-      ({ event, stage, workflow }) =>
+      ({ event, stage, unit, workflow }) =>
         `## ${event}\n` +
         `**Timestamp**: ${timestamp}\n` +
         `**Event**: ${event}\n` +
         `**Stage**: ${stage}\n` +
+        (unit ? `**Unit**: ${unit}\n` : "") +
         (workflow ? `**Workflow**: ${workflow}\n` : "") +
         "\n---\n",
     )
@@ -717,7 +804,9 @@ interface HookResult {
  * Run the real hook. Mirrors run_hook (.sh): pipe `payload` on stdin with
  * CLAUDE_PROJECT_DIR / MOCK_KIND / MOCK_UNIT /
  * CLAUDE_CODE_STOP_HOOK_BLOCK_CAP set, capture stdout, return exit code. `cap`
- * empty-string => env var unset (default cap).
+ * empty-string => env var unset (default cap). `rewriteMarker` makes the mock
+ * publish its directive into an existing marker, witnessing whether the hook
+ * probed before evaluating a resume wait.
  */
 function runHook(
   proj: string,
@@ -727,6 +816,8 @@ function runHook(
   unit = "",
   stage = "requirements-analysis",
   copilotSession = "",
+  rewriteMarker = false,
+  extraEnv: Record<string, string> = {},
 ): HookResult {
   const env: Record<string, string> = {
     ...(process.env as Record<string, string>),
@@ -735,7 +826,11 @@ function runHook(
     MOCK_KIND: kind,
     MOCK_UNIT: unit,
     MOCK_STAGE: stage,
+    MOCK_MARKER_PATH: join(seededRecordDir(proj), ".aidlc-active-directive.json"),
+    ...extraEnv,
   };
+  if (rewriteMarker) env.MOCK_REWRITE_MARKER = "1";
+  else delete env.MOCK_REWRITE_MARKER;
   // The .sh always exported CLAUDE_CODE_STOP_HOOK_BLOCK_CAP (possibly empty).
   // An empty value is falsy in blockCap() (:69 `if (!raw)`), so it behaves
   // exactly like unset — the default cap of 8. Pass it through for parity.
@@ -782,23 +877,53 @@ function runStatusSync(proj: string, stage: string): number {
 }
 
 /**
- * The hook's progress signature for a project — Current Stage + audit line
- * count — so a test can seed the counter at the matching key. Mirrors the
- * .sh's progress_sig (and aidlc-continue-workflow.ts:137 progressSignature).
+ * The hook's progress signature for a project — Current Stage + full state
+ * digest + directive position — so a test can seed the counter at the matching
+ * key. Mirrors aidlc-continue-workflow.ts progressSignature.
  */
-function progressSig(proj: string): string {
+function progressSig(
+  proj: string,
+  directive: {
+    kind?: string;
+    stage?: string;
+    unit?: string;
+    part?: number;
+    parts?: number;
+    continueToken?: string;
+    rulesContent?: Array<{ path: string; text: string }>;
+    units?: string[];
+    worker?: string;
+    repo?: string;
+    wave?: unknown;
+  } = {},
+): string {
   const s = readFileSync(seededStateFile(proj), "utf-8");
   const m = s.match(/Current Stage\*{0,2}:?\s*`?([^\n`]*)`?/);
   const stage = (m?.[1] ?? "").trim();
-  let al = 0;
-  try {
-    // The hook reads its own resolved shard (auditFilePath); with the pinned
-    // clone-id that is exactly the pinned shard, so read the same one.
-    al = readFileSync(pinnedShardPath(proj), "utf-8").split("\n").length;
-  } catch {
-    /* audit absent => 0 */
-  }
-  return `${stage}::${al}`;
+  const stableState = s.replace(/^- \*\*Last Updated\*\*:[^\n]*(?:\n|$)/gm, "");
+  const stateSha256 = createHash("sha256").update(stableState, "utf-8").digest("hex");
+  const directiveFingerprint = createHash("sha256")
+    .update(JSON.stringify({
+      kind: directive.kind ?? "run-stage",
+      stage: directive.stage ?? "requirements-analysis",
+      unit: directive.unit ?? "",
+      part: directive.part ?? null,
+      parts: directive.parts ?? null,
+      continue_token_sha256: directive.continueToken
+        ? createHash("sha256").update(directive.continueToken).digest("hex")
+        : "",
+      rules_content_sha256: directive.rulesContent
+        ? createHash("sha256").update(JSON.stringify(directive.rulesContent)).digest("hex")
+        : "",
+      units: directive.units ?? [],
+      worker: directive.worker ?? "",
+      repo: directive.repo ?? "",
+      wave_sha256: directive.wave === undefined
+        ? ""
+        : createHash("sha256").update(JSON.stringify(directive.wave)).digest("hex"),
+    }))
+    .digest("hex");
+  return `${stage}::${stateSha256}::${directiveFingerprint}`;
 }
 
 /** Read the persisted no-progress counter (or null if missing/corrupt). */
@@ -875,6 +1000,25 @@ describe("t121 aidlc-continue-workflow hook — forwarding-loop enforcement (mig
     );
     expect(parsed.reason).toContain("keep following each load-steering step");
     expect(parsed.reason).toContain("Do not summarise or narrate these rule chunks");
+
+    // Transport order keeps the opaque token ahead of truncatable bulk content.
+    const reasonText = parsed.reason ?? "";
+    const tokenAt = reasonText.indexOf('continue "steering-token-495"');
+    const payloadAt = reasonText.indexOf('"path":"aidlc/spaces/default/memory/org.md"');
+    expect(tokenAt).toBeGreaterThanOrEqual(0);
+    expect(payloadAt).toBeGreaterThanOrEqual(0);
+    expect(tokenAt).toBeLessThan(payloadAt);
+
+    // Execution order remains apply-current-chunk, then advance the cursor.
+    const holdCommandAt = reasonText.indexOf(
+      "Preserve this step-two continuation command, but do not run it yet",
+    );
+    const firstApplyAt = reasonText.indexOf("First, apply every path/text entry");
+    const secondRunAt = reasonText.indexOf("Second, run the preserved command");
+    expect(holdCommandAt).toBeGreaterThanOrEqual(0);
+    expect(firstApplyAt).toBeGreaterThan(holdCommandAt);
+    expect(secondRunAt).toBeGreaterThan(firstApplyAt);
+    expect(reasonText).not.toContain("as you go");
   }, 30000);
 
   // =========================================================================
@@ -891,6 +1035,14 @@ describe("t121 aidlc-continue-workflow hook — forwarding-loop enforcement (mig
     const proj = makeProject();
     seedActive(proj, "requirements-analysis");
     const r = runHook(proj, '{"stop_hook_active":false}', "done");
+    expect(r.out).toBe("");
+  }, 30000);
+
+  test("(b) team fan-out notice is terminal and allows the stop", () => {
+    const proj = makeProject();
+    seedActive(proj);
+    const r = runHook(proj, '{"stop_hook_active":false}', "notice");
+    expect(r.rc).toBe(0);
     expect(r.out).toBe("");
   }, 30000);
 
@@ -933,6 +1085,89 @@ describe("t121 aidlc-continue-workflow hook — forwarding-loop enforcement (mig
     const r = runHook(proj, '{"stop_hook_active":false}', "parked");
     expect(r.rc).toBe(0);
     // The parked allow is declined; the hook blocks instead.
+    expect((JSON.parse(r.out) as { decision?: string }).decision).toBe("block");
+  }, 30000);
+
+  // =========================================================================
+  // (b3) Shared resume wait — sessionless `next --resume` markers must release
+  // before the hook probes a fresh `next`, which would overwrite kind=ask.
+  // =========================================================================
+  test("(b3) sessionless resume-waiting marker allows the stop before the shared next probe", () => {
+    const proj = makeProject();
+    seedActive(proj, "requirements-analysis");
+    const markerPath = seedSessionlessResumeMarker(proj);
+    const r = runHook(
+      proj,
+      '{"stop_hook_active":false}',
+      "run-stage",
+      "",
+      "",
+      "requirements-analysis",
+      "",
+      true,
+    );
+    expect(r.rc).toBe(0);
+    expect(r.out).toBe("");
+    const marker = JSON.parse(readFileSync(markerPath, "utf-8")) as {
+      kind?: string;
+      resume?: { status?: string };
+    };
+    expect(marker.kind).toBe("ask");
+    expect(marker.resume?.status).toBe("waiting");
+  }, 30000);
+
+  test("(b3) resume-waiting marker with kind=run-stage does not release the stop", () => {
+    const proj = makeProject();
+    seedActive(proj, "requirements-analysis");
+    seedSessionlessResumeMarker(proj, "run-stage");
+    const r = runHook(proj, '{"stop_hook_active":false}', "run-stage");
+    expect(r.rc).toBe(0);
+    expect((JSON.parse(r.out) as { decision?: string }).decision).toBe("block");
+  }, 30000);
+
+  test("(b3) a non-sessionless resume marker does not release the shared stop", () => {
+    const proj = makeProject();
+    seedActive(proj, "requirements-analysis");
+    seedSessionlessResumeMarker(proj);
+    rewriteCopilotMarker(proj, (marker) => {
+      marker.owner_session = "another-host-session";
+    });
+    const r = runHook(proj, '{"stop_hook_active":false}', "run-stage");
+    expect(r.rc).toBe(0);
+    expect((JSON.parse(r.out) as { decision?: string }).decision).toBe("block");
+  }, 30000);
+
+  test("(b3) state mutation invalidates the sessionless resume-waiting marker", () => {
+    const proj = makeProject();
+    seedActive(proj, "requirements-analysis");
+    seedSessionlessResumeMarker(proj);
+    writeFileSync(
+      seededStateFile(proj),
+      "- **Workflow**: feature\n- **Scope**: feature\n- **Current Stage**: requirements-analysis\n- **Mutation**: after-resume-ask\n",
+      "utf-8",
+    );
+    const r = runHook(proj, '{"stop_hook_active":false}', "run-stage");
+    expect(r.rc).toBe(0);
+    expect((JSON.parse(r.out) as { decision?: string }).decision).toBe("block");
+  }, 30000);
+
+  test("(b3) autonomous Construction ignores a sessionless resume wait and keeps enforcing", () => {
+    const proj = makeProject();
+    seedInProgressWithQuestions(proj, {
+      slug: "code-generation",
+      phase: "construction",
+      autonomy: "autonomous",
+    });
+    seedSessionlessResumeMarker(proj, "ask", "code-generation");
+    const r = runHook(
+      proj,
+      '{"stop_hook_active":false}',
+      "run-stage",
+      "",
+      "",
+      "code-generation",
+    );
+    expect(r.rc).toBe(0);
     expect((JSON.parse(r.out) as { decision?: string }).decision).toBe("block");
   }, 30000);
 
@@ -997,16 +1232,136 @@ describe("t121 aidlc-continue-workflow hook — forwarding-loop enforcement (mig
     expect((JSON.parse(b2.out) as { decision: string }).decision).toBe("block");
   }, 30000);
 
+  test("(c2) audit-only append does not reset the no-progress streak", () => {
+    const proj = makeProject();
+    seedActive(proj, "requirements-analysis");
+    const b1 = runHook(proj, '{"stop_hook_active":false}', "run-stage", "3");
+    const b2 = runHook(proj, '{"stop_hook_active":false}', "run-stage", "3");
+    seedAuditShard(proj, "audit row 1\naudit-only row 2\n");
+    const b3 = runHook(proj, '{"stop_hook_active":false}', "run-stage", "3");
+    expect((JSON.parse(b1.out) as { decision?: string }).decision).toBe("block");
+    expect((JSON.parse(b2.out) as { decision?: string }).decision).toBe("block");
+    expect(b3.out).toBe("");
+    expect(guardCount(proj)).toBe(3);
+  }, 30000);
+
+  test("(c2) advancing load-steering part/token resets the no-progress streak", () => {
+    const proj = makeProject();
+    seedActive(proj, "requirements-analysis");
+    const first = runHook(
+      proj,
+      '{"stop_hook_active":false}',
+      "load-steering",
+      "2",
+      "",
+      "requirements-analysis",
+      "",
+      false,
+      { MOCK_PART: "1", MOCK_PARTS: "2", MOCK_CONTINUE_TOKEN: "token-one" },
+    );
+    const second = runHook(
+      proj,
+      '{"stop_hook_active":false}',
+      "load-steering",
+      "2",
+      "",
+      "requirements-analysis",
+      "",
+      false,
+      { MOCK_PART: "2", MOCK_PARTS: "2", MOCK_CONTINUE_TOKEN: "token-two" },
+    );
+    expect((JSON.parse(first.out) as { decision?: string }).decision).toBe("block");
+    expect((JSON.parse(second.out) as { decision?: string }).decision).toBe("block");
+    expect(guardCount(proj)).toBe(1);
+  }, 30000);
+
+  test("(c2) advancing invoke-swarm units resets the no-progress streak", () => {
+    const proj = makeProject();
+    seedActive(proj, "code-generation");
+    const first = runHook(
+      proj,
+      '{"stop_hook_active":false}',
+      "invoke-swarm",
+      "2",
+      "",
+      "code-generation",
+      "",
+      false,
+      { MOCK_UNITS: "auth,billing" },
+    );
+    const second = runHook(
+      proj,
+      '{"stop_hook_active":false}',
+      "invoke-swarm",
+      "2",
+      "",
+      "code-generation",
+      "",
+      false,
+      { MOCK_UNITS: "notifications" },
+    );
+    expect((JSON.parse(first.out) as { decision?: string }).decision).toBe("block");
+    expect((JSON.parse(second.out) as { decision?: string }).decision).toBe("block");
+    expect(guardCount(proj)).toBe(1);
+  }, 30000);
+
+  test("(c2) advancing run-stage wave resets the no-progress streak", () => {
+    const proj = makeProject();
+    seedActive(proj, "functional-design");
+    const first = runHook(
+      proj,
+      '{"stop_hook_active":false}',
+      "run-stage",
+      "2",
+      "",
+      "functional-design",
+      "",
+      false,
+      { MOCK_WAVE: JSON.stringify({ batch_index: 0, entries: [{ unit: "auth" }] }) },
+    );
+    const second = runHook(
+      proj,
+      '{"stop_hook_active":false}',
+      "run-stage",
+      "2",
+      "",
+      "functional-design",
+      "",
+      false,
+      { MOCK_WAVE: JSON.stringify({ batch_index: 1, entries: [{ unit: "billing" }] }) },
+    );
+    expect((JSON.parse(first.out) as { decision?: string }).decision).toBe("block");
+    expect((JSON.parse(second.out) as { decision?: string }).decision).toBe("block");
+    expect(guardCount(proj)).toBe(1);
+  }, 30000);
+
+  test("(c2) Last Updated-only state traffic does not reset the streak", () => {
+    const proj = makeProject();
+    seedActive(proj, "requirements-analysis");
+    const first = runHook(proj, '{"stop_hook_active":false}', "run-stage", "2");
+    const statePath = seededStateFile(proj);
+    writeFileSync(
+      statePath,
+      `${readFileSync(statePath, "utf-8")}- **Last Updated**: 2026-08-21T12:00:00Z\n`,
+      "utf-8",
+    );
+    const second = runHook(proj, '{"stop_hook_active":false}', "run-stage", "2");
+    expect((JSON.parse(first.out) as { decision?: string }).decision).toBe("block");
+    expect(second.out).toBe("");
+    expect(guardCount(proj)).toBe(2);
+  }, 30000);
+
   // (c3) PROGRESS resets the streak — a healthy loop is never throttled even
   // when stop_hook_active stays true. Block twice at stage-a, then pivot the
-  // stage + grow the audit (a report's effect): the counter resets to 1.
+  // state (a report's effect): the counter resets to 1.
   test("(c3) progress (stage pivot) resets the no-progress streak to 1 — healthy loop never throttled", () => {
     const proj = makeProject();
     seedActive(proj, "stage-a");
     runHook(proj, '{"stop_hook_active":true}', "run-stage", "8");
     runHook(proj, '{"stop_hook_active":true}', "run-stage", "8");
     const countBefore = guardCount(proj);
-    // Simulate a report landing: Current Stage pivots, the audit shard grows.
+    // Simulate a report landing: Current Stage pivots. Audit growth is included
+    // too, but the state digest is the progress-bearing signal.
     writeFileSync(
       seededStateFile(proj),
       "- **Workflow**: feature\n- **Scope**: feature\n- **Current Stage**: stage-b\n",
@@ -1188,6 +1543,41 @@ describe("t121 aidlc-continue-workflow hook — forwarding-loop enforcement (mig
     expect(r.out).toBe("");
   }, 30000);
 
+  test("(f) team unit-major finds a later active stage question after the durable cursor completes", () => {
+    const proj = makeProject();
+    seedInProgressWithQuestions(proj, {
+      slug: "code-generation",
+      currentSlug: "functional-design",
+      phase: "construction",
+      autonomy: "gated",
+      iteration: "unit-major",
+      unit: "alpha",
+      questions: "# Questions\n\n## Q1\nWhich edge case?\n[Answer]:\n",
+    });
+    writeFileSync(
+      seededStateFile(proj),
+      readFileSync(seededStateFile(proj), "utf-8")
+        .replace(
+          "- **Construction Iteration**: unit-major\n",
+          "- **Construction Iteration**: unit-major\n- **Unit Ownership**: team\n",
+        )
+        .replace(
+          "- [-] functional-design — EXECUTE",
+          "- [x] functional-design — EXECUTE",
+        ),
+    );
+    const r = runHook(
+      proj,
+      '{"stop_hook_active":false}',
+      "run-stage",
+      "",
+      "alpha",
+      "code-generation",
+    );
+    expect(r.rc).toBe(0);
+    expect(r.out).toBe("");
+  }, 30000);
+
   test("(f) per-unit lookup ignores a different unit's stale blank question", () => {
     const proj = makeProject();
     seedInProgressWithQuestions(proj, {
@@ -1290,6 +1680,215 @@ describe("t121 aidlc-continue-workflow hook — forwarding-loop enforcement (mig
     const r = runHook(proj, '{"stop_hook_active":false}', "run-stage");
     expect(r.rc).toBe(0);
     expect(r.out).toBe("");
+  }, 30000);
+
+  test("(f2) solo unit-major keeps Current Stage authority and the legacy drop message", () => {
+    const proj = makeProject();
+    seedInProgressWithQuestions(proj, {
+      currentSlug: "requirements-analysis",
+      iteration: "unit-major",
+    });
+    seedInteractionAudit(proj, [
+      { event: "STAGE_STARTED", stage: "requirements-analysis" },
+      { event: "DECISION_RECORDED", stage: "requirements-analysis" },
+    ]);
+    const r = runHook(
+      proj,
+      '{"stop_hook_active":false}',
+      "run-stage",
+      "",
+      "alpha",
+      "code-generation",
+    );
+    expect(r.rc).toBe(0);
+    expect(r.out).toBe("");
+    const drops = readFileSync(
+      join(
+        seededRecordDir(proj),
+        ".aidlc-hooks-health",
+        "continue-workflow.drops",
+      ),
+      "utf-8",
+    );
+    expect(drops).toContain(
+      "current stage requirements-analysis has an unanswered logged decision; allowing the stop (pending-decision carve-out)",
+    );
+    expect(drops).not.toContain("active stage code-generation");
+  }, 30000);
+
+  test("(f2) solo cross-shard ties retain legacy filename/position ordering", () => {
+    const proj = makeProject();
+    seedInProgressWithQuestions(proj);
+    const ts = "2026-08-03T18:57:53Z";
+    writeFileSync(
+      join(seededAuditDir(proj), "aaaa-answer.md"),
+      `## STAGE_STARTED\n**Timestamp**: ${ts}\n**Event**: STAGE_STARTED\n` +
+        "**Stage**: requirements-analysis\n\n---\n" +
+        `## QUESTION_ANSWERED\n**Timestamp**: ${ts}\n**Event**: QUESTION_ANSWERED\n` +
+        "**Stage**: requirements-analysis\n\n---\n",
+    );
+    writeFileSync(
+      join(seededAuditDir(proj), "zzzz-decision.md"),
+      `## DECISION_RECORDED\n**Timestamp**: ${ts}\n**Event**: DECISION_RECORDED\n` +
+        "**Stage**: requirements-analysis\n\n---\n",
+    );
+    const r = runHook(proj, '{"stop_hook_active":false}', "run-stage");
+    expect(r.rc).toBe(0);
+    expect(r.out).toBe("");
+  }, 30000);
+
+  test("(f2) team unit-major uses the later active stage for an unresolved logged decision", () => {
+    const proj = makeProject();
+    seedInProgressWithQuestions(proj, {
+      slug: "code-generation",
+      currentSlug: "functional-design",
+      phase: "construction",
+      autonomy: "gated",
+      iteration: "unit-major",
+      unit: "alpha",
+    });
+    writeFileSync(
+      seededStateFile(proj),
+      readFileSync(seededStateFile(proj), "utf-8")
+        .replace(
+          "- **Construction Iteration**: unit-major\n",
+          "- **Construction Iteration**: unit-major\n- **Unit Ownership**: team\n",
+        )
+        .replace(
+          "- [-] functional-design — EXECUTE",
+          "- [x] functional-design — EXECUTE",
+        ),
+    );
+    seedInteractionAudit(proj, [
+      {
+        event: "DECISION_RECORDED",
+        stage: "code-generation",
+        unit: "alpha",
+      },
+    ]);
+    const r = runHook(
+      proj,
+      '{"stop_hook_active":false}',
+      "run-stage",
+      "",
+      "alpha",
+      "code-generation",
+    );
+    expect(r.rc).toBe(0);
+    expect(r.out).toBe("");
+  }, 30000);
+
+  test("(f2) team unit-major ignores another Unit's unresolved logged decision", () => {
+    const proj = makeProject();
+    seedInProgressWithQuestions(proj, {
+      slug: "code-generation",
+      currentSlug: "functional-design",
+      phase: "construction",
+      autonomy: "gated",
+      iteration: "unit-major",
+      unit: "alpha",
+    });
+    writeFileSync(
+      seededStateFile(proj),
+      readFileSync(seededStateFile(proj), "utf-8").replace(
+        "- **Construction Iteration**: unit-major\n",
+        "- **Construction Iteration**: unit-major\n- **Unit Ownership**: team\n",
+      ),
+    );
+    seedInteractionAudit(proj, [
+      {
+        event: "DECISION_RECORDED",
+        stage: "code-generation",
+        unit: "beta",
+      },
+    ]);
+    const r = runHook(
+      proj,
+      '{"stop_hook_active":false}',
+      "run-stage",
+      "",
+      "alpha",
+      "code-generation",
+    );
+    expect(r.rc).toBe(0);
+    expect((JSON.parse(r.out) as { decision?: string }).decision).toBe("block");
+  }, 30000);
+
+  test("(f2) team unit-major ignores an unresolved decision before a jump boundary", () => {
+    const proj = makeProject();
+    seedInProgressWithQuestions(proj, {
+      slug: "code-generation",
+      currentSlug: "functional-design",
+      phase: "construction",
+      autonomy: "gated",
+      iteration: "unit-major",
+      unit: "alpha",
+    });
+    writeFileSync(
+      seededStateFile(proj),
+      readFileSync(seededStateFile(proj), "utf-8").replace(
+        "- **Construction Iteration**: unit-major\n",
+        "- **Construction Iteration**: unit-major\n- **Unit Ownership**: team\n",
+      ),
+    );
+    seedInteractionAudit(proj, [
+      {
+        event: "DECISION_RECORDED",
+        stage: "code-generation",
+        unit: "alpha",
+      },
+      { event: "STAGE_JUMPED", stage: "functional-design" },
+    ]);
+    const r = runHook(
+      proj,
+      '{"stop_hook_active":false}',
+      "run-stage",
+      "",
+      "alpha",
+      "code-generation",
+    );
+    expect(r.rc).toBe(0);
+    expect((JSON.parse(r.out) as { decision?: string }).decision).toBe("block");
+  }, 30000);
+
+  test("(f2) team unit-major fails closed on a cross-shard jump/decision timestamp tie", () => {
+    const proj = makeProject();
+    seedInProgressWithQuestions(proj, {
+      slug: "code-generation",
+      currentSlug: "functional-design",
+      phase: "construction",
+      autonomy: "gated",
+      iteration: "unit-major",
+      unit: "alpha",
+    });
+    writeFileSync(
+      seededStateFile(proj),
+      readFileSync(seededStateFile(proj), "utf-8").replace(
+        "- **Construction Iteration**: unit-major\n",
+        "- **Construction Iteration**: unit-major\n- **Unit Ownership**: team\n",
+      ),
+    );
+    const ts = "2026-08-03T18:57:53Z";
+    writeFileSync(
+      join(seededAuditDir(proj), "aaaa-jump.md"),
+      `## STAGE_JUMPED\n**Timestamp**: ${ts}\n**Event**: STAGE_JUMPED\n` +
+        "**Stage**: functional-design\n\n---\n",
+    );
+    writeFileSync(
+      join(seededAuditDir(proj), "zzzz-decision.md"),
+      `## DECISION_RECORDED\n**Timestamp**: ${ts}\n**Event**: DECISION_RECORDED\n` +
+        "**Stage**: code-generation\n**Unit**: alpha\n\n---\n",
+    );
+    const r = runHook(
+      proj,
+      '{"stop_hook_active":false}',
+      "run-stage",
+      "",
+      "alpha",
+      "code-generation",
+    );
+    expect(r.rc).toBe(0);
+    expect((JSON.parse(r.out) as { decision?: string }).decision).toBe("block");
   }, 30000);
 
   test("(f2) a later QUESTION_ANSWERED closes the logged-question carve-out", () => {
@@ -1618,12 +2217,44 @@ describe("t121 aidlc-continue-workflow hook — forwarding-loop enforcement (mig
     // child, so deleting the marking now fails this test.
     const witness = JSON.parse(
       readFileSync(join(proj, ".probe-env-witness.json"), "utf-8"),
-    ) as { probe: string | null };
+    ) as {
+      probe: string | null;
+      sessionOverride: string | null;
+      sessionOverrideSource: string | null;
+    };
     expect(witness.probe).toBe("1");
 
     // Retained as a regression guard on the mock's own inertness: if the mock is
     // ever taught to advance the workflow, this catches the marker moving.
     expect(statSync(enginePath).mtimeMs).toBe(before);
+  }, 30000);
+
+  test("(f2) divergent payload marker avoids refusal fail-open", () => {
+    const proj = makeProject();
+    seedActive(proj, "requirements-analysis");
+    writeSessionPidEntry(proj, process.pid, "ancestry-session");
+
+    const r = runHook(
+      proj,
+      JSON.stringify({
+        session_id: "payload-session",
+        stop_hook_active: false,
+      }),
+      "run-stage",
+    );
+
+    expect(r.rc).toBe(0);
+    expect((JSON.parse(r.out) as { decision?: string }).decision).toBe("block");
+    const witness = JSON.parse(
+      readFileSync(join(proj, ".probe-env-witness.json"), "utf-8"),
+    ) as {
+      probe: string | null;
+      sessionOverride: string | null;
+      sessionOverrideSource: string | null;
+    };
+    expect(witness.probe).toBe("1");
+    expect(witness.sessionOverride).toBe("payload-session");
+    expect(witness.sessionOverrideSource).toBe("payload");
   }, 30000);
 
   test("(f2) the probe mark is scoped to the engine consultation, not leaked into the hook's own process", () => {

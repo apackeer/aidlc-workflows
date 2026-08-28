@@ -69,6 +69,10 @@ mkdir -p your-project/.kiro your-project/aidlc
 cp -R "$RUNTIME_ROOT/kiro/.kiro/." your-project/.kiro/
 cp -R "$RUNTIME_ROOT/kiro/aidlc/." your-project/aidlc/    # the workspace shell (spaces/default/memory) — a sibling of .kiro/, not inside it
 cp "$RUNTIME_ROOT/kiro/AGENTS.md" your-project/AGENTS.md  # merge if you already have one
+# Existing .gitignore: preserve it and merge only the section beginning "# AI-DLC".
+if [ ! -e your-project/.gitignore ]; then
+  cp "$RUNTIME_ROOT/kiro/.gitignore" your-project/.gitignore
+fi
 ```
 
 The `aidlc/` directory is the workspace shell — it ships the pre-built
@@ -81,6 +85,24 @@ The versioned runtime uses the native `aidlc` command. Framework developers who
 need the Bun-shaped source projection can clone the repository, run
 `bun install --frozen-lockfile` and `bun scripts/package.ts`, then use the
 ignored local `dist/kiro/` output instead.
+
+The shipped `.gitignore` carries the workspace's commit/ignore split: the
+per-user cursors (`aidlc/active-space`, `aidlc/spaces/*/intents/active-intent`)
+and machine-local runtime (`aidlc/.aidlc-clone-id`, `runtime-graph.json`, sensor
+caches, `spaces/*/knowledge/.sources.local.json`) stay untracked, while the
+shared records — method memory, state, audit shards, artifacts — travel with
+git. The guarded command copies the complete starter file only when the project
+has no `.gitignore`. If one exists, preserve every project-owned rule and merge
+only the section from `# AI-DLC` through the end of the shipped file; do not
+copy its generic starter rules. The `## Git Integration` section of the
+installed `AGENTS.md` assumes the AI-DLC rules are in place before your first
+workflow.
+
+Then start a session in your project:
+
+```bash
+cd your-project && kiro-cli chat
+```
 
 The install ships `.kiro/settings/cli.json` with `chat.defaultAgent: "aidlc"`,
 so the AI-DLC conductor agent is active by default — `/aidlc` just works.
@@ -126,6 +148,12 @@ Start `kiro-cli chat` in the project, then invoke the conductor with
 navigation uses `/aidlc intent [name]`, `/aidlc space [name]`, and
 `/aidlc space-create <name>`. The per-stage (`/aidlc-domain-design`) and
 per-scope (`/aidlc-feature`) runner skills are installed too.
+
+Status, doctor, help, version, and workspace-navigation commands are dispatched
+by the Kiro hook before the model can turn them into workflow work. Their child
+output is decoded as UTF-8 and terminal protocol/control bytes are removed only
+at that plain-text relay boundary; ordinary Unicode, paths, tabs, newlines, and
+literal escape-looking text remain unchanged.
 
 **Start the session from the project root.** Native installs pre-approve the
 installed `aidlc` command. Source/development copies pre-approve only

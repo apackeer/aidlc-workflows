@@ -537,6 +537,99 @@ function harnessProbeGate(
   }
 }
 
+function compiledKiroNewWorkRoutingGate(artifact: string): GateResult {
+  const project = mkdtempSync(join(tmpdir(), "aidlc-binary-kiro-routing-"));
+  try {
+    cpSync(join(REPO_ROOT, "dist", "kiro"), project, { recursive: true });
+    const env: NodeJS.ProcessEnv = { ...process.env, PATH: "" };
+    delete env.AIDLC_HARNESS_DIR;
+    delete env.AIDLC_HARNESS_NAME;
+    delete env.AIDLC_PROJECT_DIR;
+    delete env.CLAUDE_PROJECT_DIR;
+    const create = (scope: string, label: string) =>
+      run(
+        artifact,
+        [
+          "intent",
+          "create",
+          "--scope",
+          scope,
+          "--label",
+          label,
+          "--project-dir",
+          project,
+        ],
+        { cwd: project, env, timeoutMs: 30_000 },
+      );
+    const first = create("feature", "fixture");
+    const second = create("poc", "second fixture");
+    rmSync(
+      join(
+        project,
+        "aidlc",
+        "spaces",
+        "default",
+        "intents",
+        "active-intent",
+      ),
+      { force: true },
+    );
+    const routed = run(
+      artifact,
+      [
+        "next",
+        "poc",
+        "Create a tiny TypeScript command-line program that prints Hello World.",
+        "--project-dir",
+        project,
+      ],
+      { cwd: project, env, timeoutMs: 30_000 },
+    );
+    let kind = "";
+    let askType = "";
+    let selectors = 0;
+    try {
+      const directive = JSON.parse(routed.stdout) as {
+        kind?: string;
+        ask_type?: string;
+        available_intents?: string[];
+      };
+      kind = directive.kind ?? "";
+      askType = directive.ask_type ?? "";
+      selectors = directive.available_intents?.length ?? 0;
+    } catch {
+      /* reported below */
+    }
+    const output = [
+      first.stdout,
+      first.stderr,
+      second.stdout,
+      second.stderr,
+      routed.stdout,
+      routed.stderr,
+    ].join("\n");
+    return commandGate(
+      "compiled-kiro-new-work-routing",
+      routed,
+      first.status === 0 &&
+        second.status === 0 &&
+        routed.status === 0 &&
+        kind === "ask" &&
+        askType === "new-work-routing" &&
+        selectors === 2 &&
+        !runtimeCrash(output),
+      {
+        expected: "compiled Kiro next emits typed routing with two record selectors",
+        actual:
+          `${kind || "<no-kind>"}:${askType || "<no-ask-type>"} selectors=${selectors}`,
+        detail: `createStatuses=${first.status},${second.status}`,
+      },
+    );
+  } finally {
+    rmSync(project, { recursive: true, force: true });
+  }
+}
+
 function pluginSelectGate(artifact: string): GateResult {
   const project = installedProject("aidlc-binary-select-");
   try {
@@ -684,7 +777,7 @@ function textFilesUnder(root: string): string {
 function sensorFireGate(artifact: string): GateResult {
   const project = installedProject("aidlc-binary-sensor-");
   try {
-    const birth = run(
+    const createResult = run(
       artifact,
       ["engine", "intent", "create", "--scope", "poc", "--label", "sensor-gate", "--project-dir", project],
       { cwd: project, env: pathlessEnv(project), timeoutMs: 30_000 },
@@ -720,7 +813,7 @@ function sensorFireGate(artifact: string): GateResult {
     return commandGate(
       "run-sensors",
       result,
-      birth.status === 0 &&
+      createResult.status === 0 &&
         result.status === 0 &&
         /SENSOR_(PASSED|FAILED)/.test(audit) &&
         !audit.includes("script-error") &&
@@ -758,7 +851,7 @@ function boltReentryGate(artifact: string): GateResult {
     const invocationCwd = dirname(project);
     const projectArg = relative(invocationCwd, project);
     const env = { ...pathlessEnv(), PATH: dirname(git) };
-    const birth = run(
+    const createResult = run(
       artifact,
       ["engine", "intent", "create", "--scope", "poc", "--label", "bolt-gate", "--project-dir", projectArg],
       { cwd: invocationCwd, env, timeoutMs: 30_000 },
@@ -790,7 +883,7 @@ function boltReentryGate(artifact: string): GateResult {
     return commandGate(
       "bolt-reentry",
       result,
-      birth.status === 0 &&
+      createResult.status === 0 &&
         worktree.status === 0 &&
         result.status === 0 &&
         result.stdout.includes("RUNTIME_GRAPH_FORKED") &&
@@ -817,10 +910,26 @@ function swarmReentryGate(artifact: string): GateResult {
     const invocationCwd = dirname(project);
     const projectArg = relative(invocationCwd, project);
     const env = { ...pathlessEnv(), PATH: dirname(git) };
-    const birth = run(
+    const createResult = run(
       artifact,
       ["engine", "intent", "create", "--scope", "poc", "--label", "swarm-gate", "--project-dir", projectArg],
       { cwd: invocationCwd, env, timeoutMs: 30_000 },
+    );
+    // `swarm prepare` now accepts authority only for Units in the current DAG.
+    // Seed the minimal one-unit DAG in this binary self-reentry fixture rather
+    // than relying on an arbitrary --units slug to create review authority.
+    const intentsRoot = join(project, "aidlc", "spaces", "default", "intents");
+    const cursor = ["active-intent", ".active-intent"]
+      .map((name) => join(intentsRoot, name))
+      .find((path) => existsSync(path));
+    if (!cursor) throw new Error(`swarm reentry intent cursor missing under ${intentsRoot}`);
+    const activeIntent = readFileSync(cursor, "utf-8").trim();
+    const dagDir = join(intentsRoot, activeIntent, "inception", "units-generation");
+    mkdirSync(dagDir, { recursive: true });
+    writeFileSync(
+      join(dagDir, "unit-of-work-dependency.md"),
+      "```yaml\nunits:\n  - name: swarm-unit\n    depends_on: []\n```\n",
+      "utf-8",
     );
     const result = run(
       artifact,
@@ -850,7 +959,7 @@ function swarmReentryGate(artifact: string): GateResult {
     return commandGate(
       "swarm-reentry",
       result,
-      birth.status === 0 && result.status === 0 && prepared && !runtimeCrash(output),
+      createResult.status === 0 && result.status === 0 && prepared && !runtimeCrash(output),
       { expected: "Swarm prepare composes worktree and Bolt through the binary", actual: output.trim() },
     );
   } catch (error) {
@@ -1104,7 +1213,7 @@ function planApprovalHookGate(artifact: string): GateResult {
       "hook-plan-approval-guard",
       result,
       result.status === 2 &&
-        result.stderr.includes("plan-approval guard") &&
+        result.stderr.includes("Code generation cannot start") &&
         !runtimeCrash(output) &&
         !output.includes("does not export run(input)"),
       {
@@ -1165,7 +1274,7 @@ function planApprovalAdapterGate(
       `adapter-${harness}-plan-approval-guard`,
       result,
       result.status === 2 &&
-        result.stderr.includes("plan-approval guard") &&
+        result.stderr.includes("Code generation cannot start") &&
         !runtimeCrash(output) &&
         !output.includes("does not export run(input)"),
       {
@@ -1331,7 +1440,7 @@ function routedProjectDirGate(artifact: string): GateResult {
       "validate-state.last",
     );
 
-    const birth = run(
+    const createResult = run(
       artifact,
       [
         "engine",
@@ -1399,8 +1508,8 @@ function routedProjectDirGate(artifact: string): GateResult {
     const output = [
       hook.stdout,
       hook.stderr,
-      birth.stdout,
-      birth.stderr,
+      createResult.stdout,
+      createResult.stderr,
       statusline.stdout,
       statusline.stderr,
       adapter.stdout,
@@ -1412,7 +1521,7 @@ function routedProjectDirGate(artifact: string): GateResult {
       hook.status === 0 &&
         existsSync(targetGenericHeartbeat) &&
         !existsSync(cwdGenericHeartbeat) &&
-        birth.status === 0 &&
+        createResult.status === 0 &&
         statusline.status === 0 &&
         statusline.stdout.includes("Intent Capture") &&
         adapter.status === 0 &&
@@ -1421,7 +1530,7 @@ function routedProjectDirGate(artifact: string): GateResult {
       {
         expected: "hook, statusline, and adapter honor explicit --project-dir",
         actual:
-          `hook=${hook.status}; birth=${birth.status}; statusline=${statusline.status}; ` +
+          `hook=${hook.status}; createResult=${createResult.status}; statusline=${statusline.status}; ` +
           `adapter=${adapter.status}; targetHeartbeat=${existsSync(adapterHeartbeat)}`,
       },
     );
@@ -1576,10 +1685,12 @@ function dispatcherParityGate(artifact: string): GateResult {
 function delegateDoctorDataGate(artifact: string): GateResult {
   const result = run(artifact, ["doctor", "--verbose"], {
     cwd: standaloneGateCwd(),
+    env: pathlessEnv(),
     timeoutMs: 30_000,
   });
   const output = `${result.stdout}\n${result.stderr}`;
-  const crashSignature = output.match(/Cannot find module|\/\$bunfs\/|ENOENT/)?.[0] ?? "";
+  const crashSignature =
+    output.match(/Cannot find module|\/\$bunfs\/|ENOENT|uv_spawn ['"]bun['"]/)?.[0] ?? "";
   const reportEmitted = result.stdout.includes("AI-DLC doctor");
   const schemaCount = /Schema validation: (\d+)\/(\d+) stages validated/.exec(result.stdout);
   const meaningfulSchemaCount =
@@ -1953,7 +2064,7 @@ function buildTarget(target: TargetConfig): TargetResult {
     result.gates.push(harnessProbeGate(
       actual.artifact,
       "kiro",
-      "agents/aidlc.json present (hook + permission wiring)",
+      "agents/aidlc.{json,md} present (conductor wiring)",
     ));
     result.gates.push(harnessProbeGate(
       actual.artifact,
@@ -1965,6 +2076,7 @@ function buildTarget(target: TargetConfig): TargetResult {
       "opencode",
       "opencode.json or opencode.jsonc present",
     ));
+    result.gates.push(compiledKiroNewWorkRoutingGate(actual.artifact));
     result.gates.push(pluginSelectGate(actual.artifact));
     result.gates.push(delegatePluginSyncGate(actual.artifact));
     result.gates.push(realPluginSyncGate(actual.artifact));

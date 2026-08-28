@@ -55,7 +55,6 @@ import {
   activeSpace,
   auditBlockField,
   auditShardDir,
-  docsRoot,
   harnessDir,
   hooksHealthDir,
   isoTimestamp,
@@ -108,13 +107,17 @@ export interface DoctorFinding {
   safeToAutomate: boolean;
 }
 
-// The legacy pass/label/fix row handleDoctor builds today. Kept as the live
-// render's shape; adaptLegacyResult() lifts one into a DoctorFinding so the
-// bundle and the live report share findings without rewriting every check.
+// The legacy pass/label/fix row handleDoctor builds today. Optional id/severity
+// let newer checks preserve structured identity without rewriting older rows.
+// adaptLegacyResult() lifts either shape into a DoctorFinding. `severity` also
+// accepts the live report's "warn" vocabulary (DoctorCheck rows from
+// collectDoctorReport); adaptLegacyResult normalizes it to "warning".
 export interface LegacyDoctorResult {
   pass: boolean;
   label: string;
   fix?: string;
+  id?: string;
+  severity?: Severity | "warn";
 }
 
 // Derive a stable, slug-shaped finding id from a legacy label. The label's
@@ -129,21 +132,23 @@ export function findingIdFromLabel(label: string): string {
   return slug.length > 0 ? slug : "check";
 }
 
-// Lift a legacy {pass,label,fix} row into the shared model. A failed row is an
-// error; a passing row with an advisory "(advisory)" tag is a warning; every
-// other passing row is info. A recovery-bypass remedy (names an
-// AIDLC_DISABLE_* env or "archive your workspace") is never safe to automate.
+// Lift a live row into the shared model. Explicit id/severity win; legacy rows
+// derive them from pass/label. A recovery-bypass remedy (names an AIDLC_DISABLE_*
+// env or "archive your workspace") is never safe to automate.
 export function adaptLegacyResult(r: LegacyDoctorResult): DoctorFinding {
   const advisory = /\(advisory\)/i.test(r.label);
-  const severity: Severity = !r.pass ? "error" : advisory ? "warning" : "info";
+  const explicit: Severity | undefined =
+    r.severity === "warn" ? "warning" : r.severity;
+  const severity: Severity =
+    explicit ?? (!r.pass ? "error" : advisory ? "warning" : "info");
   const remedy = r.fix ?? "";
   return {
-    id: findingIdFromLabel(r.label),
+    id: r.id ?? findingIdFromLabel(r.label),
     severity,
     summary: r.label,
     evidence: {},
     remedy,
-    safeToAutomate: severity === "info" ? true : !isRecoveryBypass(remedy),
+    safeToAutomate: !isRecoveryBypass(remedy),
   };
 }
 
@@ -216,6 +221,16 @@ const SECRET_PATTERNS: Array<{ rule: string; re: RegExp; replace: string }> = [
   },
   { rule: "long-hex-or-b64", re: /\b[A-Fa-f0-9]{40,}\b/g, replace: "<redacted-hex>" },
 ];
+
+export function redactSecretPatterns(value: string): string {
+  let out = value;
+  for (const { re, replace } of SECRET_PATTERNS) {
+    re.lastIndex = 0;
+    out = out.replace(re, replace);
+    re.lastIndex = 0;
+  }
+  return out;
+}
 
 // Redact one string: home dir → ~, project root → <project>, seeded ids → their
 // hashes, then the secret scan. Order matters — path normalization first so a
@@ -783,7 +798,7 @@ export function runDiagnosis(input: DiagnosisInput): DoctorFinding[] {
   // NOTE: a reviewer-loop-incomplete rule was intentionally dropped here. It
   // depended on **Review** / **Review Iterations** audit fields that no emitter
   // on this base writes (the reviewer verdict lives in a `## Review` section on
-  // the primary artifact and the iteration counter lives only in conductor
+  // the stage's explicit review_artifact and the iteration counter lives only in conductor
   // context — see stage-protocol.md), so the rule was unreachable dead code.
   // Reinstate it only alongside a real audit emission for the reviewer verdict.
 
@@ -1484,8 +1499,8 @@ function readMarkers(projectDir: string): NormalizedEvidence["markers"] {
     }
   }
   const stopDir = stopHookDir(projectDir);
-  const turnCounterPath = join(docsRoot(projectDir), ".aidlc-turn-counter");
-  const latchPath = join(docsRoot(projectDir), ".aidlc-readonly-latch");
+  const turnCounterPath = join(projectDir, "aidlc", ".aidlc-turn-counter");
+  const latchPath = join(projectDir, "aidlc", ".aidlc-readonly-latch");
   return {
     planExists,
     planParseable,

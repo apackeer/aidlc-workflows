@@ -128,6 +128,15 @@ describe("t248 dist/copilot packaging parity + shell shape", () => {
   });
 
   test("4: persona twins carry no model/tier keys and exclude the agent delegation tool", () => {
+    for (const agentsDir of [join(ENGINE, "agents"), join(SHELL, "agents")]) {
+      for (const f of readdirSync(agentsDir).filter((x) => x.endsWith(".md"))) {
+        const raw = readFileSync(join(agentsDir, f), "utf-8");
+        expect(raw, `${f}: concrete default memory pointer`).not.toContain(
+          "aidlc/spaces/<active-space>/memory/",
+        );
+      }
+    }
+
     const agentsDir = join(SHELL, "agents");
     const files = readdirSync(agentsDir).filter((f) => f.endsWith(".md"));
     expect(files.length).toBe(14);
@@ -165,7 +174,7 @@ describe("t248 dist/copilot packaging parity + shell shape", () => {
     expect(orchestrator).toContain("picker results do not fire");
     expect(orchestrator).toContain("| `load-steering` |");
     expect(orchestrator).toContain("directive.continue_token");
-    expect(orchestrator).toContain("The orchestration engine emits eight kinds today");
+    expect(orchestrator).toContain("The orchestration engine emits nine kinds today");
     expect(orchestrator).toContain("stage-protocol-ensemble.md");
     const ensembleProtocol = readFileSync(
       join(
@@ -186,7 +195,10 @@ describe("t248 dist/copilot packaging parity + shell shape", () => {
     );
     expect(questionRendering).toContain("numbered prose options in chat");
     expect(questionRendering).toContain("does not fire the trusted `UserPromptSubmit`");
-    expect(questionRendering).toContain("Calling either picker would therefore deadlock");
+    expect(questionRendering).toContain("matcher-free");
+    expect(questionRendering).toContain("PreToolUse guard denies");
+    expect(questionRendering).toContain("With no running workflow");
+    expect(questionRendering).toContain("completed or unusable state");
     expect(questionRendering).toContain("start every question at `1`");
     expect(questionRendering).toMatch(/Use unordered\s+bullets/);
     expect(questionRendering).toMatch(/Visible `1`\s+maps/);

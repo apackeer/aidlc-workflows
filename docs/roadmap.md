@@ -58,7 +58,7 @@ Two strategic pillars shape how the North Star reaches users and evolves:
 | 1 | Real-world ensemble | Shipped | 2.5.0 independent collaborators and selectable topologies (#568); enforced reviewer receipts (#569); batch-parallel per-unit waves (#617) | Harness-native live-team transports and planned-Bolt/runtime alignment remain enhancements (#734) |
 | 2 | Customization | Shipped, with follow-ups | 2.3.0 plugin seam, 2.3.5 content projection/selection (#550), deterministic rule delivery (#658), plugin scopes (#664), reusable plugin test kit (#792) | Stage-specific rules, `when:` evaluation, remote discovery and marketplace (#723) |
 | 3 | Adaptiveness | Shipped | 2.2.0 composer, entropy-scored composition (#595), deterministic ARS (#644), unit-major Code Generation (#705), Classic/Express scopes and conditional protocol modules (#767) | Boundary changes remain human-approved by design |
-| 4 | Verifier as adversary | Shipped | 2.4.0 adversarial evidence contract (#566), completion-path enforcement (#569), reviewer-class cost dial (#718), turn/recovery backstops (#613, #758) | Blocking sensor severity is an adjacent follow-up (#431) |
+| 4 | Verifier as adversary | Shipped | 2.4.0 adversarial evidence contract (#566), gate-and-completion enforcement (#569, #551), reviewer-class cost dial (#718), turn/recovery backstops (#613, #758) | Blocking sensor severity is an adjacent follow-up (#431) |
 | 5 | Cyclic flows | Partial | Within-stage review/revision loops, bounded recovery mechanics, and explicit human-authorized forward/backward/redo stage jumps | Stage-triggered governed cross-stage feedback loops remain unbuilt; #616 is a narrower Build & Test loop-back |
 | 6 | Traceability | Partial | Artefact graph, upstream coverage, per-stage enforcement (#401), claim provenance (#647, #686), shared CodeKB safeguards (#670), domain/contract boundaries (#711), fingerprinted Testing Posture plan approval (#772) | Progressive in-place enrichment, stale-result propagation (#716), source-bound receipts (#646), cross-unit discovery |
 | 7 | Org repository | Shipped | 2.1.0 spaces/intents/org-KB, declared multi-repo manifest and sync (#674), clone-safe active-space cursor (#709), DocumentKB indexing and citations (#731) | Additional retrieval lifecycle and auditable supplemental-knowledge selection remain active extensions (#694, #714) |
@@ -164,17 +164,22 @@ but do not yet have committed release versions.
 - The plugin mechanism, content projection, selection and plugin-contributed
   scopes are shipped; the plugin test kit and authoring tiers shipped in
   [#792](https://github.com/awslabs/aidlc-workflows/pull/792).
-- Remote discovery, trust, a first-party marketplace and a graduation path are
-  proposed in [#723](https://github.com/awslabs/aidlc-workflows/issues/723).
+- The offline plugin CREATE, VALIDATE, BUILD, and TEST authoring tiers ship as
+  the standalone `aidlc-plugin-create.ts`, `aidlc-plugin-validate.ts`,
+  `aidlc-plugin-build.ts`, and `aidlc-plugin-test.ts` tools. The top-level
+  command routes remain proposed in
+  [#723](https://github.com/awslabs/aidlc-workflows/issues/723).
+  Remote discovery, trust, a first-party marketplace and a graduation path are
+  also proposed in #723.
   Product discovery
   ([#652](https://github.com/awslabs/aidlc-workflows/issues/652),
   [#782](https://github.com/awslabs/aidlc-workflows/pull/782)) and design
   ([#527](https://github.com/awslabs/aidlc-workflows/issues/527)) are candidates
   for first-party plugins.
 - Plugin-native diagnostics are active in
-  [#797](https://github.com/awslabs/aidlc-workflows/pull/797); external authoring
-  and test tooling is proposed in
-  [#793](https://github.com/awslabs/aidlc-workflows/issues/793).
+  [#797](https://github.com/awslabs/aidlc-workflows/pull/797); external authors
+  can exercise composition against a disposable copy of an install with
+  `aidlc-plugin-test.ts`.
 
 ### Knowledge and documents
 

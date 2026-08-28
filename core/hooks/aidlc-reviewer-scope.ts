@@ -27,8 +27,11 @@
 // both), and the Kiro CLI adapter asserts scoped registration instead (it
 // wires this hook inside the reviewer agents' own JSON configs, so every
 // call arriving through that registration IS the reviewer's). Kiro IDE
-// ships no registration: its hook payloads carry no tool inputs, so a
-// pre-tool matcher has nothing to inspect there.
+// ships no registration: tool inputs are not uniformly available across its
+// supported generations (captured 0.12 and early-1.x payloads are empty; later
+// 1.x builds populate some PreToolUse and delegation inputs - see
+// docs/reference/kiro-ide-hook-payload.md), and its payloads carry no
+// agent_type, so no stable identity/target contract exists there.
 //
 // Fail-open everywhere: no record, a stale record (mtime beyond
 // REVIEWER_DISPATCH_TTL_MS - janitored like the compose marker), malformed
@@ -50,8 +53,11 @@ import {
   errorMessage,
   hooksHealthDir,
   isClaudeCodeHookInput,
+  isTeamUnitOwnership,
   isoTimestamp,
   recordHookDrop,
+  readStateFile,
+  readUnitScopeStamp,
   releaseAuditLock,
   resolveProjectFlag,
   resolveProjectDirFromHook,
@@ -686,17 +692,53 @@ export function parseDispatchRecord(raw: string): ReviewerDispatch | null {
 // reviewer self-corrects without retrying the same call.
 export function blockReason(target: string, dispatch: ReviewerDispatch): string {
   return (
-    `[aidlc] reviewer read-scope: "${target}" reads another unit's files under construction/. ` +
-    `This review covers unit ${dispatch.unit} only, plus the specific files you were handed ` +
-    `(the stage file, the questions file, and the shared design documents this unit builds ` +
-    `on). Check cross-unit claims against those handed files instead of opening another ` +
-    `unit's work. If this unit's design names an integration point in another unit's file, ` +
-    `say so in your findings rather than reading it; the only files readable outside this ` +
-    `unit are the ones the conductor listed as exceptions when it started the review. (If ` +
-    `you meant a file in the CURRENT unit, write the unit name out in full - a shell ` +
-    `variable in the path cannot be checked, so it is refused; searches must stay inside ` +
-    `the current unit's path.)`
+    `This review cannot open "${target}" because it belongs to another unit; the current ` +
+    `review covers ${dispatch.unit}. Use the files supplied with the review and the files ` +
+    `under this unit's construction path. If the design depends on another unit, note that ` +
+    `integration point in the findings instead of opening its files. Write ${dispatch.unit} ` +
+    `literally in shell paths because variables cannot be checked, and keep searches inside ` +
+    `the current unit.`
   );
+}
+
+function emitReviewerScopeBlocked(
+  projectDir: string,
+  toolName: string,
+  target: string,
+  stage: string,
+  unit: string,
+): void {
+  // Best-effort: an audit failure never changes the block decision. The lock
+  // acquisition is TIME-BOUNDED well below the standard 5s budget (5 x 50ms):
+  // the block decision is already made, and a lock-starved Bolt fan-out must
+  // not stretch a fast refuse into a laggy one.
+  try {
+    if (!existsSync(auditFilePath(projectDir))) return;
+    if (!acquireAuditLock(projectDir, 5, 50)) {
+      recordHookDrop(
+        projectDir,
+        HOOK_NAME,
+        "audit lock contended; REVIEWER_SCOPE_BLOCKED row dropped (block still enforced)",
+      );
+      return;
+    }
+    try {
+      appendAuditEntryUnlocked(
+        "REVIEWER_SCOPE_BLOCKED",
+        {
+          Tool: toolName,
+          Target: target,
+          Stage: stage,
+          Unit: unit,
+        },
+        projectDir,
+      );
+    } finally {
+      releaseAuditLock(projectDir);
+    }
+  } catch {
+    // Advisory emission only.
+  }
 }
 
 // The two shipped review-only agents. Used ONLY for the advisory
@@ -739,6 +781,49 @@ export async function run(input: string): Promise<number> {
   const toolInput = parsed.tool_input;
   if (!["Read", "NotebookRead", "Edit", "MultiEdit", "Write", "NotebookEdit", "LS", "Glob", "Grep", "Bash"].includes(toolName)) {
     return 0;
+  }
+
+  let unitScope = null;
+  try {
+    if (isTeamUnitOwnership(readStateFile(projectDir))) {
+      unitScope = readUnitScopeStamp(projectDir);
+    }
+  } catch {
+    // No active team workflow means no claimed-checkout write bound.
+  }
+  if (
+    unitScope &&
+    ["Edit", "MultiEdit", "Write", "NotebookEdit", "Bash"].includes(toolName)
+  ) {
+    let scopedVerdict: ScopeVerdict;
+    try {
+      const cwdField = (parsed as { cwd?: unknown }).cwd;
+      scopedVerdict = evaluateReviewerScope(
+        toolName,
+        toolInput,
+        { unit: unitScope.unit, exempt: [] },
+        {
+          recordRoot: dirname(reviewerDispatchPath(projectDir)),
+          cwd: typeof cwdField === "string" && cwdField.length > 0 ? cwdField : projectDir,
+        },
+      );
+    } catch (e) {
+      recordHookDrop(projectDir, HOOK_NAME, errorMessage(e));
+      return 0;
+    }
+    if (scopedVerdict.block) {
+      emitReviewerScopeBlocked(
+        projectDir,
+        toolName,
+        scopedVerdict.target ?? "",
+        "claimed-checkout",
+        unitScope.unit,
+      );
+      process.stderr.write(
+        `This checkout is scoped to Unit "${unitScope.unit}"; refusing cross-unit write target "${scopedVerdict.target ?? ""}".\n`,
+      );
+      return 2;
+    }
   }
 
   const recordPath = reviewerDispatchPath(projectDir);
@@ -810,9 +895,13 @@ export async function run(input: string): Promise<number> {
   // calls). The Kiro CLI adapter instead asserts scoped_registration - it
   // registers this hook inside the reviewer agents' own JSON configs, so
   // every call arriving through that registration is the reviewer's. (Kiro
-  // IDE ships no registration at all: its hook payloads carry no tool inputs,
-  // so there is nothing to match on there.) Anything else - the conductor's
-  // own calls, other subagents - passes through untouched.
+  // IDE ships no registration at all: tool inputs are not uniformly available
+  // across its supported generations - captured 0.12 and early-1.x payloads
+  // are empty, while later 1.x builds populate some PreToolUse and delegation
+  // inputs (see docs/reference/kiro-ide-hook-payload.md) - and its payloads
+  // carry no agent_type, so no stable identity/target contract exists there.)
+  // Anything else - the conductor's own calls, other subagents - passes
+  // through untouched.
   const agentType = parsed.agent_type ?? "";
   const scopedRegistration = parsed.scoped_registration === true;
   const isDispatchedReviewer =
@@ -832,36 +921,13 @@ export async function run(input: string): Promise<number> {
   }
   if (!verdict.block) return 0;
 
-  // Audit the refusal so the run's record shows when the bound bit.
-  // Best-effort: an audit failure never changes the block decision. The lock
-  // acquisition is TIME-BOUNDED well below the standard 5s budget (5 x 50ms):
-  // the block decision is already made, and a lock-starved Bolt fan-out must
-  // not stretch a fast refuse into a laggy one - a dropped advisory row is
-  // preferable to a slow block.
-  try {
-    if (existsSync(auditFilePath(projectDir))) {
-      if (acquireAuditLock(projectDir, 5, 50)) {
-        try {
-          appendAuditEntryUnlocked(
-            "REVIEWER_SCOPE_BLOCKED",
-            {
-              Tool: toolName,
-              Target: verdict.target ?? "",
-              Stage: dispatch.stage,
-              Unit: dispatch.unit,
-            },
-            projectDir,
-          );
-        } finally {
-          releaseAuditLock(projectDir);
-        }
-      } else {
-        recordHookDrop(projectDir, HOOK_NAME, "audit lock contended; REVIEWER_SCOPE_BLOCKED row dropped (block still enforced)");
-      }
-    }
-  } catch {
-    // Advisory emission only.
-  }
+  emitReviewerScopeBlocked(
+    projectDir,
+    toolName,
+    verdict.target ?? "",
+    dispatch.stage,
+    dispatch.unit,
+  );
 
   process.stderr.write(`${blockReason(verdict.target ?? "", dispatch)}\n`);
   return 2; // harness PreToolUse reject contract: exit 2 + stderr blocks

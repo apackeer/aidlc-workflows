@@ -109,12 +109,86 @@ function activeIntent(
   return dirs.length === 1 ? dirs[0] : null;
 }
 
-function stateFilePath(projectDir: string): string {
+// The statusline is a read-only display on the hot path, so it carries LOCAL
+// lite copies of the lib's session-selection helpers instead of importing
+// aidlc-lib.ts (startup cost). Semantics mirror validSessionId /
+// readSessionBinding / resolveWorkflowSelection / stateFilePathForSelection:
+// a per-session binding (written by the session hooks) pins the displayed
+// space/intent; anything malformed or stale degrades to the shared cursors.
+type StatuslineSelection = { space: string; intent: string | null };
+
+function validSessionId(sessionId: string | undefined): string | null {
+  const raw = sessionId ?? "";
+  const safe = raw
+    .replace(/[^A-Za-z0-9._-]+/g, "-")
+    .replace(/^-+|-+$/g, "")
+    .slice(0, 180);
+  if (!safe || safe === "." || safe === "..") return null;
+  return safe === raw ? raw : null;
+}
+
+function readSessionBinding(
+  projectDir: string,
+  sessionId: string,
+): StatuslineSelection | null {
+  try {
+    const parsed: unknown = JSON.parse(
+      readFileSync(
+        join(
+          workspaceRoot(projectDir),
+          ".aidlc-sessions",
+          `${sessionId}.binding.json`,
+        ),
+        "utf-8",
+      ),
+    );
+    if (parsed === null || typeof parsed !== "object") return null;
+    const record = parsed as Record<string, unknown>;
+    const space = record.space;
+    const intent = record.intent;
+    if (typeof space !== "string" || !/^[a-z][a-z0-9-]*$/.test(space)) {
+      return null;
+    }
+    if (
+      intent !== null &&
+      (typeof intent !== "string" ||
+        !/^[A-Za-z0-9][A-Za-z0-9._-]*$/.test(intent))
+    ) {
+      return null;
+    }
+    if (typeof record.boundAt !== "string" || record.boundAt.length === 0) {
+      return null;
+    }
+    if (
+      intent !== null &&
+      !existsSync(join(intentsDir(projectDir, space), intent, "aidlc-state.md"))
+    ) {
+      return null;
+    }
+    return { space, intent: intent as string | null };
+  } catch {
+    return null;
+  }
+}
+
+function resolveWorkflowSelection(
+  projectDir: string,
+  sessionId?: string,
+): StatuslineSelection {
+  const binding = sessionId ? readSessionBinding(projectDir, sessionId) : null;
+  if (binding) return binding;
   const space = activeSpace(projectDir);
-  const intent = activeIntent(projectDir, space);
-  return intent
-    ? join(intentsDir(projectDir, space), intent, "aidlc-state.md")
-    : join(spacesRoot(projectDir), space, "aidlc-state.md");
+  return { space, intent: activeIntent(projectDir, space) };
+}
+
+function stateFilePathForSelection(
+  projectDir: string,
+  selection: StatuslineSelection,
+): string {
+  const root = selection.intent === null
+    ? intentsDir(projectDir, selection.space)
+    : join(intentsDir(projectDir, selection.space), selection.intent);
+  return join(root, "aidlc-state.md");
 }
 
 function listSpaces(projectDir: string): string[] {
@@ -448,15 +522,16 @@ function buildRightSide(
 //     (listSpaces() always reports at least the always-present "default", so a
 //     single-team user — exactly one space — never sees the word "space");
 //   - the intent slug renders whenever a per-intent record is active. On the
-//     flat-legacy / pre-auto-birth layout activeIntent() returns null, so the
+//     flat-legacy / pre-auto-create layout activeIntent() returns null, so the
 //     prefix is empty and the line reads exactly as it did before the workspace
 //     move (a flat project is unchanged).
 // The intent SLUG comes from the registry (rename-stable) when the active
 // record has a registry row; otherwise it falls back to the record dir name
 // minus its `-id8` disambiguator (an orphan / hand-created record).
-function orientationPrefix(projectDir: string): string {
-  const space = activeSpace(projectDir);
-  const activeDir = activeIntent(projectDir, space);
+function orientationPrefix(projectDir: string, sessionId?: string): string {
+  const selection = resolveWorkflowSelection(projectDir, sessionId);
+  const space = selection.space;
+  const activeDir = selection.intent;
   if (activeDir === null) return ""; // flat-legacy / no record → no prefix
   const intents = listIntents(projectDir, space);
   const match = intents.find((i) => i.dirName === activeDir);
@@ -497,13 +572,20 @@ async function main(stdinText: string): Promise<void> {
     import.meta.url,
     input.workspace?.project_dir,
   );
+  const sessionId = validSessionId(input.session_id) ?? undefined;
   const modelShort = abbreviateModel(input.model?.id ?? "");
   const ctxRaw = input.model?.id ? input.context_window?.used_percentage : undefined;
   const ctxInt = typeof ctxRaw === "number" ? Math.round(ctxRaw) : null;
-  const cost = costSegment(projectDir, input.transcript_path, input.session_id);
+  const cost = costSegment(projectDir, input.transcript_path, sessionId);
   const right = buildRightSide(modelShort, ctxInt, cost);
 
-  const stateFile = projectDir ? stateFilePath(projectDir) : "";
+  const selection = projectDir
+    ? resolveWorkflowSelection(projectDir, sessionId)
+    : null;
+  const stateFile =
+    projectDir && selection
+      ? stateFilePathForSelection(projectDir, selection)
+      : "";
   if (!stateFile || !existsSync(stateFile)) {
     printLine("[AIDLC] ready", right);
     return;
@@ -528,7 +610,7 @@ async function main(stdinText: string): Promise<void> {
   }
   // Orientation prefix — only computed once a record is active (the state file
   // resolved above), so the empty-state "[AIDLC] ready" lines never carry it.
-  const prefix = orientationPrefix(projectDir);
+  const prefix = orientationPrefix(projectDir, sessionId);
   if (status === "Completed" || status === "Complete") {
     // At workflow completion, show a full bar even if Lifecycle Phase no longer
     // resolves to a real heading (e.g. a future caller writes a "COMPLETE"

@@ -48,8 +48,9 @@
 //
 // FIXTURE DISCIPLINE — replicate the .sh's make_workflow (t131:76-85) EXACTLY:
 // a fresh temp project with aidlc-docs/ + a self-contained .claude/ skeleton
-// holding the three tool files (aidlc-runtime.ts, aidlc-lib.ts, aidlc-audit.ts)
-// + data/stage-graph.json + the two driven hooks copied in, plus a minimal
+// holding the five tool modules (runtime, lib, artifact vocabulary, runtime
+// paths, and audit) + data/stage-graph.json + the two driven hooks copied in,
+// plus a minimal
 // aidlc-state.md ("- **Scope**: bugfix"). The COPY (not symlink) matters: the
 // runtime-compile hook spawns <proj>/.claude/tools/aidlc-runtime.ts, whose
 // aidlc-lib.ts resolves data/stage-graph.json relative to its own location —
@@ -259,7 +260,7 @@ describe("t131 hooks-move registration (settings.json + SKILL.md, mechanism none
 
 /**
  * make_workflow (t131:76-85): a fresh temp project with a self-contained
- * .claude/ skeleton (the three tools + data/stage-graph.json + the two driven
+ * .claude/ skeleton (the tools + data/stage-graph.json + the two driven
  * hooks copied in), aidlc-docs/, and a minimal aidlc-state.md. `withState`
  * controls whether the state file is seeded (the .sh's make_workflow seeds it;
  * the bare self-gate project omits it).
@@ -269,7 +270,13 @@ function makeProject(withState: boolean): string {
   tempDirs.push(proj);
   mkdirSync(join(proj, ".claude", "tools", "data"), { recursive: true });
   mkdirSync(join(proj, ".claude", "hooks"), { recursive: true });
-  for (const t of ["aidlc-runtime.ts", "aidlc-lib.ts", "aidlc-settings.ts", "aidlc-runtime-paths.ts", "aidlc-audit.ts"]) {
+  for (const t of [
+    "aidlc-runtime.ts",
+    "aidlc-lib.ts",
+    "aidlc-artifact-vocabulary.ts",
+    "aidlc-settings.ts", "aidlc-runtime-paths.ts",
+    "aidlc-audit.ts",
+  ]) {
     copyFileSync(join(SRC_TOOLS, t), join(proj, ".claude", "tools", t));
   }
   copyFileSync(
@@ -406,6 +413,31 @@ describe("t131 spine fires inside a workflow (mechanism cli — spawnSync)", () 
       tool_input: {
         command:
           "aidlc report --stage requirements-analysis --result approved",
+      },
+    });
+    const r = runHook(runtimeCompileHook(proj), proj, json);
+    expect(r.status).toBe(0);
+    expect(existsSync(graphPath(proj))).toBe(true);
+  }, 30000);
+
+  test("Unit landing refreshes runtime state from a UNIT_MERGED transition", () => {
+    const proj = makeProject(true);
+    mkdirSync(seededAuditDir(proj), { recursive: true });
+    writeFileSync(
+      pinnedShardPath(proj),
+      `## Unit Merged
+**Event**: UNIT_MERGED
+**Unit**: alpha
+**Attempt Generation**: 1
+
+---
+`,
+      "utf-8",
+    );
+    const json = JSON.stringify({
+      tool_name: "Bash",
+      tool_input: {
+        command: "aidlc unit land alpha",
       },
     });
     const r = runHook(runtimeCompileHook(proj), proj, json);

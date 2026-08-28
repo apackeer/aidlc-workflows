@@ -106,6 +106,11 @@ then set `RUNTIME_ROOT` to the extracted `runtime/` directory.
 3. Start opencode in the project and run `/aidlc --doctor`, then `/aidlc`
    followed by what you want to build.
 
+Because opencode has no channel for the session-start hook's injected context,
+the `/aidlc` skill performs one read-only status probe on a bare invocation. An
+existing workflow gets the standard Resume / Redo / Jump / Start Fresh menu;
+`/aidlc --resume` skips both the probe and menu and continues directly.
+
 The versioned runtime uses the native `aidlc` command. Framework developers who
 need the Bun-shaped projection can clone the repository, run
 `bun install --frozen-lockfile` and `bun scripts/package.ts`, then use the

@@ -39,13 +39,12 @@ import {
 } from "node:fs";
 import { basename, dirname, join } from "node:path";
 import {
-  activeIntent,
-  activeIntentUuid,
-  activeSpace,
   auditLockIdentity,
+  intentUuidForSelection,
   modelRatesPath,
   readSessionIntentUuid,
   resolveProjectFlag,
+  resolveWorkflowSelection,
   sessionsDir,
   withAuditLock,
   writeFileAtomic,
@@ -803,10 +802,10 @@ export function intentUsageKey(
       const stamped = readSessionIntentUuid(projectDir, sessionId);
       if (stamped) return `intent:${stamped}`;
     }
-    const space = activeSpace(projectDir);
-    const uuid = activeIntentUuid(projectDir, space);
+    const selection = resolveWorkflowSelection(projectDir, { sessionId });
+    const uuid = intentUuidForSelection(projectDir, selection);
     if (uuid) return `intent:${uuid}`;
-    return `record:${space}/${activeIntent(projectDir, space) ?? "legacy"}`;
+    return `record:${selection.space}/${selection.intent ?? "legacy"}`;
   } catch {
     return "record:default/legacy";
   }

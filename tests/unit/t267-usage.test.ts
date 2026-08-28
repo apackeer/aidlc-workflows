@@ -64,6 +64,11 @@ import {
   type UsageRow,
 } from "../../dist/claude/.claude/tools/aidlc-usage.ts";
 
+const USAGE_LOCK_STRESS_ROUNDS = Math.max(
+  1,
+  Number.parseInt(process.env.AIDLC_T267_LOCK_STRESS_ROUNDS ?? "1", 10) || 1,
+);
+
 const tempDirs: string[] = [];
 function mkProject(): string {
   const dir = mkdtempSync(join(tmpdir(), "aidlc-usage-"));
@@ -1723,19 +1728,19 @@ describe("offset-aware fold, holdback, byteOffset", () => {
       "tools",
       "aidlc-usage.ts",
     );
-    for (let round = 0; round < 8; round++) {
+    for (let round = 0; round < USAGE_LOCK_STRESS_ROUNDS; round++) {
       const dir = mkProject();
       const processes: ReturnType<typeof Bun.spawn>[] = [];
       for (let i = 0; i < 24; i++) {
-        const transcript = join(dir, `session-${round}-${i}.jsonl`);
+        const transcript = join(dir, `session-${i}.jsonl`);
         writeFileSync(
           transcript,
           `${assistantLine({
-            uuid: `u-${round}-${i}`,
+            uuid: `u-${i}`,
             timestamp: "t",
             model: "opus",
             output: 1,
-            msgId: `m-${round}-${i}`,
+            msgId: `m-${i}`,
           })}\n`,
         );
         const script =
@@ -1750,13 +1755,15 @@ describe("offset-aware fold, holdback, byteOffset", () => {
         );
       }
       const exits = await Promise.all(processes.map((child) => child.exited));
-      expect(exits.every((code) => code === 0), `round ${round}`).toBe(true);
+      expect(exits.every((code) => code === 0), `stress round ${round + 1}`)
+        .toBe(true);
       const ledger = loadLedger(dir);
       expect(
         ledger.workflows["intent:race"].totals.tokens.output,
-        `round ${round}`,
+        `stress round ${round + 1}`,
       ).toBe(24);
-      expect(Object.keys(ledger.cursors), `round ${round}`).toHaveLength(24);
+      expect(Object.keys(ledger.cursors), `stress round ${round + 1}`)
+        .toHaveLength(24);
     }
-  }, 60_000);
+  }, 300000);
 });

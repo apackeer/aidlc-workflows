@@ -1,4 +1,4 @@
-// covers: cli:aidlc-state(approve,gate-start), cli:aidlc-orchestrate(report), cli:aidlc-log(answer), audit:SUMMARY_CONFIRMATION_RECORDED, function:handleApprove, function:handleGateStart, function:handleAnswer, function:humanActedSinceGate, function:humanActedSinceLastAnswer, function:hasOpenGate, function:isAutonomousMode, function:humanPresenceGuardDisabled, function:checkSummaryConfirmationEvidence, function:summaryConfirmationGuardDisabled, file:hooks/aidlc-record-human-turn.ts
+// covers: cli:aidlc-state(approve,gate-start), cli:aidlc-orchestrate(report), cli:aidlc-log(answer), audit:SUMMARY_CONFIRMATION_RECORDED, function:handleApprove, function:handleGateStart, function:handleAnswer, function:pendingSummaryDecision, function:humanActedSinceGate, function:humanActedSinceLastAnswer, function:hasOpenGate, function:isAutonomousMode, function:humanPresenceGuardDisabled, function:humanTurnMintAllowed, function:unattendedHumanPresenceHint, function:checkSummaryConfirmationEvidence, function:readAuditShardEvents, function:SUMMARY_CONFIRMATION_HASH_SCOPE, function:summaryConfirmationGuardDisabled, file:hooks/aidlc-record-human-turn.ts
 //
 // t188 - human-presence approval gate (ledger-event design).
 //
@@ -44,12 +44,13 @@
 
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { spawnSync } from "node:child_process";
-import { join } from "node:path";
+import { dirname, join, relative } from "node:path";
 import {
   AIDLC_SRC,
   cleanupTestProject,
   createTestProject,
   resetAidlcEnv,
+  seededAuditShard,
   seededRecordDir,
   seededStateFile,
   seedStateFile,
@@ -66,16 +67,23 @@ const BUN = process.execPath;
 const STATE = join(AIDLC_SRC, "tools", "aidlc-state.ts");
 const ORCHESTRATE = join(AIDLC_SRC, "tools", "aidlc-orchestrate.ts");
 const LOG = join(AIDLC_SRC, "tools", "aidlc-log.ts");
+const MINT_HOOK = join(AIDLC_SRC, "hooks", "aidlc-record-human-turn.ts");
 const MID_IDEATION = "state-mid-ideation.md"; // Current Stage: feasibility
 
 // Drive a state subcommand with the PRESENCE guard ENABLED (clear the suite's
 // presence-bypass var) but the ARTIFACT guard still bypassed (a separate
 // chokepoint these bare fixtures don't satisfy). Returns exit code + output.
-function guarded(proj: string, args: string[]): { rc: number; out: string } {
+function guarded(
+  proj: string,
+  args: string[],
+  unattended = false,
+): { rc: number; out: string } {
   const env = { ...process.env };
   env.AIDLC_SKIP_ARTIFACT_GUARD = "1";
   env.AIDLC_ALLOW_DIRECT_STATE_TRANSITIONS = "1";
   delete env.AIDLC_SKIP_HUMAN_PRESENCE_GUARD;
+  if (unattended) env.AIDLC_UNATTENDED = "1";
+  else delete env.AIDLC_UNATTENDED;
   const r = spawnSync(BUN, [STATE, ...args, "--project-dir", proj], {
     encoding: "utf-8",
     env,
@@ -84,10 +92,16 @@ function guarded(proj: string, args: string[]): { rc: number; out: string } {
 }
 
 // Drive an aidlc-log subcommand with the same guard posture.
-function guardedLog(proj: string, args: string[]): { rc: number; out: string } {
+function guardedLog(
+  proj: string,
+  args: string[],
+  unattended = false,
+): { rc: number; out: string } {
   const env = { ...process.env };
   env.AIDLC_SKIP_ARTIFACT_GUARD = "1";
   delete env.AIDLC_SKIP_HUMAN_PRESENCE_GUARD;
+  if (unattended) env.AIDLC_UNATTENDED = "1";
+  else delete env.AIDLC_UNATTENDED;
   const r = spawnSync(BUN, [LOG, ...args, "--project-dir", proj], {
     encoding: "utf-8",
     env,
@@ -211,9 +225,9 @@ describe("t188: human-presence approval gate (ledger-event design)", () => {
     const slug = field(proj, "Current Stage"); // feasibility
     guarded(proj, ["checkbox", `${slug}=in-progress`]);
     guarded(proj, ["gate-start", slug]); // STAGE_AWAITING_APPROVAL recorded (ledger non-empty)
-    const r = guarded(proj, ["approve", slug, "--user-input", "ok"]);
+    const r = guarded(proj, ["approve", slug, "--user-input", "Approve"]);
     expect(r.rc).not.toBe(0);
-    expect(r.out).toContain("Refusing to approve");
+    expect(r.out).toContain("Cannot approve");
     expect(eventCount(proj, "GATE_APPROVED")).toBe(0);
     // State untouched: the stage is NOT marked completed.
     expect(field(proj, "Current Stage")).toBe(slug);
@@ -229,7 +243,7 @@ describe("t188: human-presence approval gate (ledger-event design)", () => {
     guarded(proj, ["checkbox", `${slug}=in-progress`]);
     recordHumanTurn(proj); // the human typed a prompt
     guarded(proj, ["gate-start", slug]); // agent opens the gate (same turn)
-    const r = guarded(proj, ["approve", slug, "--user-input", "ok"]);
+    const r = guarded(proj, ["approve", slug, "--user-input", "Approve"]);
     expect(r.rc, r.out).toBe(0);
     expect(eventCount(proj, "GATE_APPROVED")).toBe(1);
     // Auto-advanced off feasibility.
@@ -251,7 +265,7 @@ describe("t188: human-presence approval gate (ledger-event design)", () => {
     guarded(proj, ["gate-start", slug1]);
 
     // First gate this turn: commits.
-    const r1 = guarded(proj, ["approve", slug1, "--user-input", "ok"]);
+    const r1 = guarded(proj, ["approve", slug1, "--user-input", "Approve"]);
     expect(r1.rc).toBe(0);
     expect(eventCount(proj, "GATE_APPROVED")).toBe(1);
 
@@ -262,9 +276,9 @@ describe("t188: human-presence approval gate (ledger-event design)", () => {
     expect(slug2).not.toBe(slug1);
     guarded(proj, ["checkbox", `${slug2}=in-progress`]);
     guarded(proj, ["gate-start", slug2]);
-    const r2 = guarded(proj, ["approve", slug2, "--user-input", "ok"]);
+    const r2 = guarded(proj, ["approve", slug2, "--user-input", "Approve"]);
     expect(r2.rc).not.toBe(0);
-    expect(r2.out).toContain("Refusing to approve");
+    expect(r2.out).toContain("Cannot approve");
     // Still exactly ONE commit across the whole turn.
     expect(eventCount(proj, "GATE_APPROVED")).toBe(1);
     expect(field(proj, "Current Stage")).toBe(slug2);
@@ -276,13 +290,13 @@ describe("t188: human-presence approval gate (ledger-event design)", () => {
     guarded(proj, ["checkbox", `${slug1}=in-progress`]);
     recordHumanTurn(proj);
     guarded(proj, ["gate-start", slug1]);
-    expect(guarded(proj, ["approve", slug1, "--user-input", "ok"]).rc).toBe(0);
+    expect(guarded(proj, ["approve", slug1, "--user-input", "Approve"]).rc).toBe(0);
 
     const slug2 = field(proj, "Current Stage");
     guarded(proj, ["checkbox", `${slug2}=in-progress`]);
     guarded(proj, ["gate-start", slug2]);
     recordHumanTurn(proj); // the human acts again
-    const r2 = guarded(proj, ["approve", slug2, "--user-input", "ok"]);
+    const r2 = guarded(proj, ["approve", slug2, "--user-input", "Approve"]);
     expect(r2.rc).toBe(0);
     expect(eventCount(proj, "GATE_APPROVED")).toBe(2);
   });
@@ -293,7 +307,7 @@ describe("t188: human-presence approval gate (ledger-event design)", () => {
     guarded(proj, ["checkbox", `${slug}=in-progress`]);
     setAutonomous(proj);
     guarded(proj, ["gate-start", slug]); // ledger non-empty, but no HUMAN_TURN
-    const r = guarded(proj, ["approve", slug, "--user-input", "ok"]);
+    const r = guarded(proj, ["approve", slug, "--user-input", "Approve"]);
     expect(r.rc).not.toBe(0);
     expect(eventCount(proj, "GATE_APPROVED")).toBe(0);
     expect(field(proj, "Current Stage")).toBe(slug);
@@ -312,9 +326,72 @@ describe("t188: human-presence approval gate (ledger-event design)", () => {
     setAutonomous(proj);
 
     guarded(proj, ["gate-start", "build-and-test"]);
-    const r = guarded(proj, ["approve", "build-and-test", "--user-input", "ok"]);
+    const r = guarded(proj, ["approve", "build-and-test", "--user-input", "Approve"]);
     expect(r.rc, r.out).toBe(0);
     expect(eventCount(proj, "GATE_APPROVED")).toBe(1);
+  });
+
+  // --- Scenario D2: unattended driving must not mint presence ----------------
+  //
+  // The mint hook has no evidence about WHO submitted a prompt: UserPromptSubmit
+  // carries no such signal and the hook reads no stdin. That is sound while every
+  // prompt comes from a person, but an unattended driver (an overnight runner
+  // resuming on a schedule, CI, cron) submits prompts too — so before
+  // AIDLC_UNATTENDED existed it minted a fresh, spendable HUMAN_TURN every cycle
+  // and "walking away" stopped meaning "no new human turn". Measured on a live
+  // detached run: 10 runner-submitted prompts, zero humans, humanActedSinceGate()
+  // true.
+  //
+  // Spawned as a PROCESS (not the exported run()) because the env read is the
+  // contract under test, and the flag is set by a parent for the whole child.
+  describe("unattended prompt submit (AIDLC_UNATTENDED)", () => {
+    function fireMintHook(p: string, unattended: boolean): number {
+      const env = { ...process.env };
+      // The hook derives the project from its OWN path (it ships inside the
+      // project), so point the dist copy at the fixture explicitly — the same
+      // override a dispatcher uses.
+      env.AIDLC_PROJECT_DIR = p;
+      if (unattended) env.AIDLC_UNATTENDED = "1";
+      else delete env.AIDLC_UNATTENDED;
+      const r = spawnSync(BUN, [MINT_HOOK], { encoding: "utf-8", env, input: "{}" });
+      return r.status ?? -1;
+    }
+
+    test("an unattended prompt mints NO HUMAN_TURN; an attended one still does", () => {
+      const before = eventCount(proj, "HUMAN_TURN");
+
+      // Unattended: exits clean (a mint decision must never fail a turn) and
+      // leaves the ledger's presence count untouched.
+      expect(fireMintHook(proj, true)).toBe(0);
+      expect(eventCount(proj, "HUMAN_TURN")).toBe(before);
+
+      // The flag is the ONLY difference — the same hook, same project, still
+      // mints for a person. This is what keeps the test from passing for the
+      // wrong reason (a hook that never mints at all).
+      expect(fireMintHook(proj, false)).toBe(0);
+      expect(eventCount(proj, "HUMAN_TURN")).toBe(before + 1);
+    });
+
+    test("a gate REFUSES on a turn minted only by an unattended prompt", () => {
+      const slug = field(proj, "Current Stage");
+      guarded(proj, ["checkbox", `${slug}=in-progress`]);
+      // The unattended driver submits its prompt...
+      expect(fireMintHook(proj, true)).toBe(0);
+      guarded(proj, ["gate-start", slug]);
+      // ...and the gate still has no human to point at.
+      const r = guarded(
+        proj,
+        ["approve", slug, "--user-input", "Approve"],
+        true,
+      );
+      expect(r.rc).not.toBe(0);
+      expect(r.out).toContain("Cannot approve");
+      expect(r.out).toContain(
+        "AIDLC_UNATTENDED=1 is set, so automated prompt submissions cannot count as a human reply",
+      );
+      expect(eventCount(proj, "GATE_APPROVED")).toBe(0);
+      expect(field(proj, "Current Stage")).toBe(slug);
+    });
   });
 
   // --- Scenario E: STALE human turn ------------------------------------------
@@ -326,15 +403,15 @@ describe("t188: human-presence approval gate (ledger-event design)", () => {
     guarded(proj, ["checkbox", `${slug1}=in-progress`]);
     recordHumanTurn(proj);
     guarded(proj, ["gate-start", slug1]);
-    expect(guarded(proj, ["approve", slug1, "--user-input", "ok"]).rc).toBe(0); // spends the turn
+    expect(guarded(proj, ["approve", slug1, "--user-input", "Approve"]).rc).toBe(0); // spends the turn
 
     // New gate, NO fresh HUMAN_TURN - the prior GATE_APPROVED is after the only turn.
     const slug2 = field(proj, "Current Stage");
     guarded(proj, ["checkbox", `${slug2}=in-progress`]);
     guarded(proj, ["gate-start", slug2]);
-    const r = guarded(proj, ["approve", slug2, "--user-input", "ok"]);
+    const r = guarded(proj, ["approve", slug2, "--user-input", "Approve"]);
     expect(r.rc).not.toBe(0);
-    expect(r.out).toContain("Refusing to approve");
+    expect(r.out).toContain("Cannot approve");
     expect(eventCount(proj, "GATE_APPROVED")).toBe(1);
     expect(field(proj, "Current Stage")).toBe(slug2);
   });
@@ -400,7 +477,7 @@ describe("t188: human-presence approval gate (ledger-event design)", () => {
       expect(hasOpenGate(open)).toBe(true);
       // Approving closes it again: the floor stops firing post-approval.
       recordHumanTurn(proj);
-      expect(guarded(proj, ["approve", slug, "--user-input", "ok"]).rc).toBe(0);
+      expect(guarded(proj, ["approve", slug, "--user-input", "Approve"]).rc).toBe(0);
       const after = readFileSync(seededStateFile(proj), "utf-8");
       expect(hasOpenGate(after)).toBe(false);
     });
@@ -428,19 +505,24 @@ describe("t188: human-presence approval gate (ledger-event design)", () => {
       ).toBe(0);
 
       summaryQuestions(proj, "Looks correct");
-      const fabricated = guardedLog(proj, [
-        "answer",
-        "--stage",
-        slug,
-        "--checkpoint",
-        "summary-confirmation",
-        "--questions-file",
-        questions,
-        "--details",
-        "Looks correct",
-      ]);
+      const fabricated = guardedLog(
+        proj,
+        [
+          "answer",
+          "--stage",
+          slug,
+          "--checkpoint",
+          "summary-confirmation",
+          "--questions-file",
+          questions,
+          "--details",
+          "Looks correct",
+        ],
+        true,
+      );
       expect(fabricated.rc).not.toBe(0);
-      expect(fabricated.out).toContain("real human has not responded");
+      expect(fabricated.out).toContain("no human reply has arrived");
+      expect(fabricated.out).toContain("Unset AIDLC_UNATTENDED");
 
       recordHumanTurn(proj);
       const confirmed = guardedLog(proj, [
@@ -465,6 +547,57 @@ describe("t188: human-presence approval gate (ledger-event design)", () => {
         "**Checkpoint**: Consolidated Summary Confirmation",
       );
       expect(audit).toContain("**Questions SHA-256**:");
+      expect(audit).toContain("**Hash Scope**: confirmed-content-v1");
+    });
+
+    test("summary confirmation refuses a same-second cross-shard human turn", () => {
+      const slug = field(proj, "Current Stage");
+      const questions = summaryQuestions(proj, "Looks correct");
+      const questionsFile = relative(proj, questions).replaceAll("\\", "/");
+      const dir = dirname(seededAuditShard(proj));
+      mkdirSync(dir, { recursive: true });
+      const timestamp = "2026-08-19T12:00:00Z";
+      writeFileSync(
+        join(dir, "aaa-prompt.md"),
+        [
+          "## Decision Recorded",
+          `**Timestamp**: ${timestamp}`,
+          "**Event**: DECISION_RECORDED",
+          `**Stage**: ${slug}`,
+          "**Checkpoint**: Consolidated Summary Confirmation",
+          `**Questions File**: ${questionsFile}`,
+          "",
+          "---",
+          "",
+        ].join("\n"),
+      );
+      writeFileSync(
+        join(dir, "zzz-human.md"),
+        [
+          "## Human Turn",
+          `**Timestamp**: ${timestamp}`,
+          "**Event**: HUMAN_TURN",
+          "",
+          "---",
+          "",
+        ].join("\n"),
+      );
+
+      const result = guardedLog(proj, [
+        "answer",
+        "--stage",
+        slug,
+        "--checkpoint",
+        "summary-confirmation",
+        "--questions-file",
+        questions,
+        "--details",
+        "Looks correct",
+      ]);
+      expect(result.rc).not.toBe(0);
+      expect(result.out).toContain("human response after this prompt cannot be proven");
+      expect(result.out).toContain("Present a fresh summary prompt");
+      expect(eventCount(proj, "SUMMARY_CONFIRMATION_RECORDED")).toBe(0);
     });
 
     test("summary confirmation refuses a file whose stored answer differs", () => {
@@ -499,6 +632,50 @@ describe("t188: human-presence approval gate (ledger-event design)", () => {
       expect(result.rc).not.toBe(0);
       expect(result.out).toContain("must contain exactly one");
       expect(eventCount(proj, "QUESTION_ANSWERED")).toBe(0);
+      expect(eventCount(proj, "SUMMARY_CONFIRMATION_RECORDED")).toBe(0);
+    });
+
+    test("summary confirmation needs a fresh turn after another answer", () => {
+      const slug = field(proj, "Current Stage");
+      const questions = summaryQuestions(proj);
+      expect(
+        guardedLog(proj, [
+          "decision",
+          "--stage",
+          slug,
+          "--checkpoint",
+          "summary-confirmation",
+          "--questions-file",
+          questions,
+          "--decision",
+          "Does this all look correct?",
+        ]).rc,
+      ).toBe(0);
+      recordHumanTurn(proj);
+      expect(
+        guardedLog(proj, [
+          "answer",
+          "--stage",
+          slug,
+          "--details",
+          "A follow-up answer",
+        ]).rc,
+      ).toBe(0);
+      summaryQuestions(proj, "Looks correct");
+
+      const result = guardedLog(proj, [
+        "answer",
+        "--stage",
+        slug,
+        "--checkpoint",
+        "summary-confirmation",
+        "--questions-file",
+        questions,
+        "--details",
+        "Looks correct",
+      ]);
+      expect(result.rc).not.toBe(0);
+      expect(result.out).toContain("that turn was already used by another decision");
       expect(eventCount(proj, "SUMMARY_CONFIRMATION_RECORDED")).toBe(0);
     });
 
@@ -612,9 +789,14 @@ describe("t188: human-presence approval gate (ledger-event design)", () => {
           "A,B",
         ]).rc,
       ).toBe(0);
-      const r = guardedLog(proj, ["answer", "--stage", slug, "--details", "my answer"]);
+      const r = guardedLog(
+        proj,
+        ["answer", "--stage", slug, "--details", "my answer"],
+        true,
+      );
       expect(r.rc).not.toBe(0);
-      expect(r.out).toContain("Refusing to record this answer");
+      expect(r.out).toContain("Cannot record this answer");
+      expect(r.out).toContain("Unset AIDLC_UNATTENDED");
       expect(eventCount(proj, "QUESTION_ANSWERED")).toBe(0);
     });
 
@@ -662,7 +844,7 @@ describe("t188: human-presence approval gate (ledger-event design)", () => {
       expect(eventCount(proj, "GATE_APPROVED")).toBe(1);
     });
 
-    test("a paraphrased approval is a no-op and report still approves", () => {
+    test("a paraphrased approval is a no-op and report refuses it", () => {
       const slug = field(proj, "Current Stage");
       guarded(proj, ["checkbox", `${slug}=in-progress`]);
       guarded(proj, ["gate-start", slug]);
@@ -688,8 +870,9 @@ describe("t188: human-presence approval gate (ledger-event design)", () => {
         "The user approved",
       ]);
       expect(approve.rc).toBe(0);
-      expect(approve.out).toContain('"kind":"done"');
-      expect(eventCount(proj, "GATE_APPROVED")).toBe(1);
+      expect(approve.out).toContain('"kind":"error"');
+      expect(approve.out).toContain("did not match an offered choice");
+      expect(eventCount(proj, "GATE_APPROVED")).toBe(0);
     });
 
     test("an interview answer still cannot authorize a later same-turn approval", () => {
@@ -718,7 +901,7 @@ describe("t188: human-presence approval gate (ledger-event design)", () => {
       ]);
       expect(approve.rc).toBe(0);
       expect(approve.out).toContain('"kind":"error"');
-      expect(approve.out).toContain("Refusing to approve");
+      expect(approve.out).toContain("did not match an offered choice");
       expect(eventCount(proj, "GATE_APPROVED")).toBe(0);
     });
 
@@ -735,7 +918,7 @@ describe("t188: human-presence approval gate (ledger-event design)", () => {
         "Approve",
       ]);
       expect(answer.rc).not.toBe(0);
-      expect(answer.out).toContain("Refusing to acknowledge this approval choice");
+      expect(answer.out).toContain("Cannot record this approval choice");
       expect(eventCount(proj, "QUESTION_ANSWERED")).toBe(0);
 
       const approve = guardedReport(proj, [
@@ -748,7 +931,7 @@ describe("t188: human-presence approval gate (ledger-event design)", () => {
       ]);
       expect(approve.rc).toBe(0);
       expect(approve.out).toContain('"kind":"error"');
-      expect(approve.out).toContain("Refusing to approve");
+      expect(approve.out).toContain("did not match an offered choice");
       expect(eventCount(proj, "GATE_APPROVED")).toBe(0);
     });
 
@@ -763,11 +946,13 @@ describe("t188: human-presence approval gate (ledger-event design)", () => {
         "--result",
         "rejected",
         "--user-input",
-        "Request Changes: tighten the schema",
+        "Request Changes",
+        "--reason",
+        "tighten the schema",
       ]);
       expect(reject.rc).toBe(0);
       expect(reject.out).toContain('"kind":"error"');
-      expect(reject.out).toContain("Refusing to reject");
+      expect(reject.out).toContain("Cannot request changes");
       expect(eventCount(proj, "GATE_REJECTED")).toBe(0);
       expect(field(proj, "Revision Count")).toBe("0");
       expect(readFileSync(seededStateFile(proj), "utf-8")).toContain(
@@ -787,7 +972,9 @@ describe("t188: human-presence approval gate (ledger-event design)", () => {
         "--result",
         "rejected",
         "--user-input",
-        "Request Changes: tighten the schema",
+        "Request Changes",
+        "--reason",
+        "tighten the schema",
       ]);
       expect(first.rc).toBe(0);
       expect(first.out).not.toContain('"kind":"error"');
@@ -800,11 +987,13 @@ describe("t188: human-presence approval gate (ledger-event design)", () => {
         "--result",
         "rejected",
         "--user-input",
-        "Request Changes: tighten the schema again",
+        "Request Changes",
+        "--reason",
+        "tighten the schema again",
       ]);
       expect(second.rc).toBe(0);
       expect(second.out).toContain('"kind":"error"');
-      expect(second.out).toContain("Refusing to reject");
+      expect(second.out).toContain("Cannot request changes");
       expect(eventCount(proj, "GATE_REJECTED")).toBe(1);
     });
 
@@ -831,7 +1020,9 @@ describe("t188: human-presence approval gate (ledger-event design)", () => {
         "--result",
         "rejected",
         "--user-input",
-        "Request Changes: tighten the schema",
+        "Request Changes",
+        "--reason",
+        "tighten the schema",
       ]);
       expect(reject.rc).toBe(0);
       expect(eventCount(proj, "GATE_REJECTED")).toBe(1);

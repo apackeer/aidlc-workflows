@@ -1,4 +1,4 @@
-// covers: subcommand:aidlc-swarm:prepare, subcommand:aidlc-swarm:check, subcommand:aidlc-swarm:finalize, function:boltSlugForUnit, audit:SWARM_STARTED, audit:SWARM_DEGRADED, audit:SWARM_UNIT_CONVERGED, audit:SWARM_UNIT_FAILED, audit:SWARM_BATON_RETURNED, audit:SWARM_COMPLETED
+// covers: subcommand:aidlc-swarm:prepare, subcommand:aidlc-swarm:check, subcommand:aidlc-swarm:finalize, function:boltSlugForUnit, function:reviewArtifactBytesSnapshot, audit:SWARM_STARTED, audit:SWARM_DEGRADED, audit:SWARM_UNIT_CONVERGED, audit:SWARM_UNIT_FAILED, audit:SWARM_BATON_RETURNED, audit:SWARM_COMPLETED
 //
 // CLI-contract port of tests/e2e/t134-swarm-referee.sh (TAP plan 13),
 // mechanism = cli. The .sh exercises aidlc-swarm.ts — the STATELESS convergence
@@ -79,7 +79,7 @@
 
 import { afterAll, describe, expect, test } from "bun:test";
 import { spawnSync } from "node:child_process";
-import { existsSync, mkdirSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs";
+import { appendFileSync, existsSync, mkdirSync, readFileSync, readdirSync, renameSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import {
   AIDLC_SRC,
@@ -113,7 +113,7 @@ afterAll(() => {
  * carries it (and so `git worktree add` does NOT byte-copy audit.md /
  * runtime-graph.json into the child).
  */
-function makeSwarmFixture(): string {
+function makeSwarmFixture(units: string[] = []): string {
   const proj = setupWorktreeFixture();
   fixtures.push(proj);
   // Seed Construction-phase state into the per-intent record + a fresh audit log
@@ -138,6 +138,7 @@ function makeSwarmFixture(): string {
       "",
     ].join("\n"),
   );
+  if (units.length > 0) seedBoltDag(proj, units);
   // Stage everything and amend the seed commit so HEAD carries the gitignore +
   // state, mirroring the .sh's `git add -A && commit --amend --no-edit`.
   const git = (args: string[]): void => {
@@ -173,10 +174,15 @@ interface RefResult {
  * tool's intended non-zero exits (check red = 1, finalize baton = 2) are part of
  * the contract, so we keep the status.
  */
-function runRef(proj: string, args: string[]): RefResult {
+function runRef(
+  proj: string,
+  args: string[],
+  env: Record<string, string> = {},
+): RefResult {
   const res = spawnSync(BUN, [SWARM_TOOL, "--project-dir", proj, ...args], {
     cwd: proj,
     encoding: "utf-8",
+    env: { ...process.env, ...env },
   });
   return { rc: res.status ?? -1, out: res.stdout ?? "" };
 }
@@ -201,25 +207,50 @@ function logWorktreeReview(proj: string, unit: string): void {
   }
   const traceability = join(dir, "traceability.json");
   if (!existsSync(traceability)) writeFileSync(traceability, "{}\n");
-  for (const terminal of [false, true]) {
-    const args = [
-      LOG_TOOL,
-      "review",
-      "--stage",
-      "functional-design",
-      "--unit",
-      unit,
-      "--reviewer",
-      "aidlc-architecture-reviewer-agent",
-      "--iteration",
-      "1",
-    ];
-    if (terminal) args.push("--verdict", "READY");
-    args.push("--project-dir", worktree);
-    const logged = spawnSync(BUN, args, { cwd: worktree, encoding: "utf-8" });
-    if (logged.status !== 0) {
-      throw new Error(`worktree review log failed: ${logged.stdout}${logged.stderr}`);
-    }
+  const args = [
+    LOG_TOOL,
+    "review",
+    "--stage",
+    "functional-design",
+    "--unit",
+    unit,
+    "--reviewer",
+    "aidlc-architecture-reviewer-agent",
+    "--iteration",
+    "1",
+    "--project-dir",
+    worktree,
+  ];
+  const requested = spawnSync(BUN, args, {
+    cwd: worktree,
+    encoding: "utf-8",
+  });
+  if (requested.status !== 0) {
+    throw new Error(
+      `worktree review request failed: ${requested.stdout}${requested.stderr}`,
+    );
+  }
+  appendFileSync(
+    join(dir, "functional-spec.md"),
+    [
+      "",
+      "## Review",
+      "",
+      "**Verdict:** READY",
+      "**Reviewer:** aidlc-architecture-reviewer-agent",
+      "**Date:** 2026-08-26T00:00:00Z",
+      "**Iteration:** 1",
+      "",
+    ].join("\n"),
+  );
+  const completed = spawnSync(BUN, [...args, "--verdict", "READY"], {
+    cwd: worktree,
+    encoding: "utf-8",
+  });
+  if (completed.status !== 0) {
+    throw new Error(
+      `worktree review verdict failed: ${completed.stdout}${completed.stderr}`,
+    );
   }
 }
 
@@ -297,7 +328,7 @@ describe("t134 swarm referee — prepare/check/finalize (migrated from t134-swar
   // converged unit, mirroring the .sh's first PROJ block.
   // ===========================================================================
   test("1 prepare: forks a worktree per unit + emits SWARM_STARTED", () => {
-    const proj = makeSwarmFixture();
+    const proj = makeSwarmFixture(["alpha", "beta"]);
     const r = runRef(proj, ["prepare", "--batch", "1", "--units", "alpha", "--base", "main"]);
     // .sh grepped `"ok": true` — but handlePrepare's envelope carries no top-level
     // `ok` field; the .sh's grep matched the nested per-unit `"ok": true` row.
@@ -361,6 +392,18 @@ describe("t134 swarm referee — prepare/check/finalize (migrated from t134-swar
       .find((b) => b.includes("**Event**: SWARM_UNIT_CONVERGED"));
     expect(convergedBlock).toContain("**Stage**: functional-design");
     expect(convergedBlock).toContain("**Run floor**: unstarted#0");
+    expect(
+      readFileSync(
+        join(
+          seededRecordDir(proj),
+          "construction",
+          "alpha",
+          "functional-design",
+          "entities.md",
+        ),
+        "utf-8",
+      ),
+    ).toBe("# entities\n");
   }, 120000);
 
   test("1b legacy-safe Unit names complete the autonomous swarm lifecycle", () => {
@@ -422,6 +465,7 @@ describe("t134 swarm referee — prepare/check/finalize (migrated from t134-swar
     ]);
     expect(finalized.rc).toBe(0);
     expect(JSON.parse(finalized.out).converged).toBe(1);
+    expect(JSON.parse(finalized.out).units[0].bolt_slug).toBe(boltSlug);
     expect(auditBody(proj)).toContain(`**Unit name**: ${unit}`);
 
     expect(
@@ -485,7 +529,7 @@ describe("t134 swarm referee — prepare/check/finalize (migrated from t134-swar
   }, 120000);
 
   test("14a stale finalize is refused before merge after the stage attempt changes", () => {
-    const proj = makeSwarmFixture();
+    const proj = makeSwarmFixture(["stale"]);
     expect(
       runRef(proj, [
         "prepare",
@@ -547,7 +591,7 @@ describe("t134 swarm referee — prepare/check/finalize (migrated from t134-swar
   }, 120000);
 
   test("14b a fully proven pre-upgrade swarm can finalize without re-prepare", () => {
-    const proj = makeSwarmFixture();
+    const proj = makeSwarmFixture(["legacy"]);
     prepareAsLegacy(proj, "legacy");
     writeFileSync(join(wtPath(proj, "legacy"), "impl.txt"), "done\n");
     logWorktreeReview(proj, "legacy");
@@ -573,7 +617,7 @@ describe("t134 swarm referee — prepare/check/finalize (migrated from t134-swar
   }, 120000);
 
   test("14c a pre-upgrade swarm from a prior attempt remains refused", () => {
-    const proj = makeSwarmFixture();
+    const proj = makeSwarmFixture(["legacy-stale"]);
     prepareAsLegacy(proj, "legacy-stale");
     writeFileSync(join(wtPath(proj, "legacy-stale"), "impl.txt"), "done\n");
     writeFileSync(
@@ -609,13 +653,317 @@ describe("t134 swarm referee — prepare/check/finalize (migrated from t134-swar
     expect(eventCount(proj, "SWARM_UNIT_CONVERGED")).toBe(0);
   }, 120000);
 
+  test("14d record-artifact merge failure is retryable before convergence authority", () => {
+    const proj = makeSwarmFixture();
+    const unit = "record-retry";
+    seedBoltDag(proj, [unit]);
+    expect(
+      runRef(proj, [
+        "prepare",
+        "--batch",
+        "1",
+        "--units",
+        unit,
+        "--base",
+        "main",
+      ]).rc,
+    ).toBe(0);
+    writeFileSync(join(wtPath(proj, unit), "impl.txt"), "done\n");
+    logWorktreeReview(proj, unit);
+
+    const unitRecord = join(
+      seededRecordDir(proj),
+      "construction",
+      unit,
+      "functional-design",
+    );
+    mkdirSync(unitRecord, { recursive: true });
+    const existingTarget = join(unitRecord, artifactFilename("entities"));
+    writeFileSync(existingTarget, "pre-finalize main bytes\n");
+    const blockingTarget = join(
+      unitRecord,
+      artifactFilename("traceability"),
+    );
+    mkdirSync(blockingTarget, { recursive: true });
+    const refused = runRef(proj, [
+      "finalize",
+      "--batch",
+      "1",
+      "--units",
+      unit,
+      "--claimed",
+      unit,
+      "--check-cmd",
+      "test -f impl.txt",
+    ]);
+    expect(refused.rc).toBe(2);
+    expect(JSON.parse(refused.out).merge_failures[0].detail).toContain(
+      "is not a regular file",
+    );
+    expect(eventCount(proj, "SWARM_UNIT_CONVERGED")).toBe(0);
+    expect(existsSync(wtPath(proj, unit))).toBe(true);
+    expect(readFileSync(existingTarget, "utf-8")).toBe(
+      "pre-finalize main bytes\n",
+    );
+
+    rmSync(blockingTarget, { recursive: true, force: true });
+    const retried = runRef(proj, [
+      "finalize",
+      "--batch",
+      "1",
+      "--units",
+      unit,
+      "--claimed",
+      unit,
+      "--check-cmd",
+      "test -f impl.txt",
+    ]);
+    expect(retried.rc).toBe(0);
+    expect(JSON.parse(retried.out).merge_failures).toEqual([]);
+    expect(eventCount(proj, "SWARM_UNIT_CONVERGED")).toBe(1);
+    expect(readFileSync(existingTarget, "utf-8")).toBe("# entities\n");
+  }, 120000);
+
+  test.skipIf(process.platform === "win32")(
+    "14e reviewed artifact symlinks are refused before record merge",
+    () => {
+      const proj = makeSwarmFixture();
+      const unit = "source-link";
+      seedBoltDag(proj, [unit]);
+      expect(
+        runRef(proj, [
+          "prepare",
+          "--batch",
+          "1",
+          "--units",
+          unit,
+          "--base",
+          "main",
+        ]).rc,
+      ).toBe(0);
+      const wt = wtPath(proj, unit);
+      writeFileSync(join(wt, "impl.txt"), "done\n");
+      logWorktreeReview(proj, unit);
+      const unitRecord = join(
+        seededRecordDir(wt),
+        "construction",
+        unit,
+        "functional-design",
+      );
+      const artifact = join(unitRecord, artifactFilename("entities"));
+      const outside = join(wt, "outside-entities.md");
+      writeFileSync(outside, "# entities\n");
+      rmSync(artifact, { force: true });
+      symlinkSync(outside, artifact);
+
+      const refused = runRef(proj, [
+        "finalize",
+        "--batch",
+        "1",
+        "--units",
+        unit,
+        "--claimed",
+        unit,
+        "--check-cmd",
+        "test -f impl.txt",
+      ]);
+      expect(refused.rc).toBe(2);
+      expect(refused.out).toContain("current artifact fingerprint");
+      expect(eventCount(proj, "SWARM_UNIT_CONVERGED")).toBe(0);
+    },
+    120000,
+  );
+
+  test.skipIf(process.platform === "win32")(
+    "14g dangling optional artifact and parent symlinks fail closed",
+    () => {
+      const proj = makeSwarmFixture();
+      const unit = "dangling-links";
+      seedBoltDag(proj, [unit]);
+      expect(
+        runRef(proj, [
+          "prepare",
+          "--batch",
+          "1",
+          "--units",
+          unit,
+          "--base",
+          "main",
+        ]).rc,
+      ).toBe(0);
+      const wt = wtPath(proj, unit);
+      writeFileSync(join(wt, "impl.txt"), "done\n");
+      logWorktreeReview(proj, unit);
+      const unitRecord = join(
+        seededRecordDir(wt),
+        "construction",
+        unit,
+        "functional-design",
+      );
+      const optional = join(
+        unitRecord,
+        artifactFilename("frontend-components"),
+      );
+      symlinkSync(join(wt, "missing-optional.md"), optional);
+      const danglingLeaf = runRef(proj, [
+        "finalize",
+        "--batch",
+        "1",
+        "--units",
+        unit,
+        "--claimed",
+        unit,
+        "--check-cmd",
+        "test -f impl.txt",
+      ]);
+      expect(danglingLeaf.rc).toBe(2);
+      expect(danglingLeaf.out).toContain("current artifact fingerprint");
+      rmSync(optional, { force: true });
+
+      const movedRecord = `${unitRecord}-saved`;
+      renameSync(unitRecord, movedRecord);
+      symlinkSync(join(wt, "missing-record-dir"), unitRecord, "dir");
+      const danglingParent = runRef(proj, [
+        "finalize",
+        "--batch",
+        "1",
+        "--units",
+        unit,
+        "--claimed",
+        unit,
+        "--check-cmd",
+        "test -f impl.txt",
+      ]);
+      expect(danglingParent.rc).toBe(2);
+      expect(danglingParent.out).toContain("current artifact fingerprint");
+      expect(eventCount(proj, "SWARM_UNIT_CONVERGED")).toBe(0);
+    },
+    120000,
+  );
+
+  test("14h apply-time verification failure rolls back the complete record set", () => {
+    const proj = makeSwarmFixture();
+    const unit = "record-rollback";
+    seedBoltDag(proj, [unit]);
+    expect(
+      runRef(proj, [
+        "prepare",
+        "--batch",
+        "1",
+        "--units",
+        unit,
+        "--base",
+        "main",
+      ]).rc,
+    ).toBe(0);
+    const wt = wtPath(proj, unit);
+    writeFileSync(join(wt, "impl.txt"), "done\n");
+    logWorktreeReview(proj, unit);
+
+    const unitRecord = join(
+      seededRecordDir(proj),
+      "construction",
+      unit,
+      "functional-design",
+    );
+    mkdirSync(unitRecord, { recursive: true });
+    const entities = join(unitRecord, artifactFilename("entities"));
+    const rules = join(unitRecord, artifactFilename("rules"));
+    const functionalSpec = join(
+      unitRecord,
+      artifactFilename("functional-spec"),
+    );
+    writeFileSync(entities, "old entities\n");
+    writeFileSync(rules, "old rules\n");
+    const failPath =
+      `construction/${unit}/functional-design/${artifactFilename("rules")}`;
+    const refused = runRef(
+      proj,
+      [
+        "finalize",
+        "--batch",
+        "1",
+        "--units",
+        unit,
+        "--claimed",
+        unit,
+        "--check-cmd",
+        "test -f impl.txt",
+      ],
+      {
+        AIDLC_TEST: "1",
+        AIDLC_TEST_RECORD_VERIFY_FAIL: failPath,
+      },
+    );
+    expect(refused.rc).toBe(2);
+    expect(JSON.parse(refused.out).merge_failures[0].detail).toContain(
+      "injected verification failure",
+    );
+    expect(readFileSync(entities, "utf-8")).toBe("old entities\n");
+    expect(readFileSync(rules, "utf-8")).toBe("old rules\n");
+    expect(existsSync(functionalSpec)).toBe(false);
+    expect(eventCount(proj, "SWARM_UNIT_CONVERGED")).toBe(0);
+  }, 120000);
+
+  test.skipIf(process.platform === "win32")(
+    "14f symlinked main-record destinations are refused before writes",
+    () => {
+      const proj = makeSwarmFixture();
+      const unit = "destination-link";
+      seedBoltDag(proj, [unit]);
+      expect(
+        runRef(proj, [
+          "prepare",
+          "--batch",
+          "1",
+          "--units",
+          unit,
+          "--base",
+          "main",
+        ]).rc,
+      ).toBe(0);
+      const wt = wtPath(proj, unit);
+      writeFileSync(join(wt, "impl.txt"), "done\n");
+      logWorktreeReview(proj, unit);
+
+      const construction = join(
+        seededRecordDir(proj),
+        "construction",
+        unit,
+      );
+      const outside = join(proj, "outside-record");
+      mkdirSync(construction, { recursive: true });
+      mkdirSync(outside, { recursive: true });
+      symlinkSync(outside, join(construction, "functional-design"), "dir");
+
+      const refused = runRef(proj, [
+        "finalize",
+        "--batch",
+        "1",
+        "--units",
+        unit,
+        "--claimed",
+        unit,
+        "--check-cmd",
+        "test -f impl.txt",
+      ]);
+      expect(refused.rc).toBe(2);
+      expect(JSON.parse(refused.out).merge_failures[0].detail).toContain(
+        "symlink",
+      );
+      expect(readdirSync(outside)).toEqual([]);
+      expect(eventCount(proj, "SWARM_UNIT_CONVERGED")).toBe(0);
+    },
+    120000,
+  );
+
   // Cases 2, 3, 4, 6 are asserted inside test 1's shared-fixture flow above
   // (the .sh ran them sequentially against the same PROJ). Named here for the
   // 1:1 parity map; their expects live in "1 prepare ...".
   test("2 check: genuinely converged unit -> exit 0, converged:true", () => {
     // Covered by the case-2 block in "1 prepare ..." (shared fixture). Re-prove
     // standalone: a fresh fixture, prepared + impl-staged unit checks green.
-    const proj = makeSwarmFixture();
+    const proj = makeSwarmFixture(["g2"]);
     runRef(proj, ["prepare", "--batch", "1", "--units", "g2", "--base", "main"]);
     writeFileSync(join(wtPath(proj, "g2"), "impl.txt"), "done\n");
     const c = runRef(proj, ["check", "g2", "--check-cmd", "test -f impl.txt"]);
@@ -624,7 +972,7 @@ describe("t134 swarm referee — prepare/check/finalize (migrated from t134-swar
   }, 120000);
 
   test("3 check is stateless: repeat call same verdict (no counter)", () => {
-    const proj = makeSwarmFixture();
+    const proj = makeSwarmFixture(["g3"]);
     runRef(proj, ["prepare", "--batch", "1", "--units", "g3", "--base", "main"]);
     writeFileSync(join(wtPath(proj, "g3"), "impl.txt"), "done\n");
     const first = runRef(proj, ["check", "g3", "--check-cmd", "test -f impl.txt"]);
@@ -637,7 +985,7 @@ describe("t134 swarm referee — prepare/check/finalize (migrated from t134-swar
   }, 120000);
 
   test("4 check: not-yet-converged unit -> exit non-zero, converged:false", () => {
-    const proj = makeSwarmFixture();
+    const proj = makeSwarmFixture(["g4"]);
     runRef(proj, ["prepare", "--batch", "1", "--units", "g4", "--base", "main"]);
     // No impl staged -> the check command fails (exit non-zero).
     const c = runRef(proj, ["check", "g4", "--check-cmd", "test -f impl.txt"]);
@@ -650,7 +998,7 @@ describe("t134 swarm referee — prepare/check/finalize (migrated from t134-swar
   // baseline re-derived from the worktree's own git fork (no stored hash).
   // ===========================================================================
   test("5 anti-tamper: edited protected --test-file -> tampered:true, refused", () => {
-    const proj = makeSwarmFixture();
+    const proj = makeSwarmFixture(["gamma"]);
     // Seed a TRACKED protected file so the worktree fork carries it at HEAD.
     mkdirSync(join(proj, "spec"), { recursive: true });
     writeFileSync(join(proj, "spec", "unit.test"), "EXPECTED\n");
@@ -682,7 +1030,7 @@ describe("t134 swarm referee — prepare/check/finalize (migrated from t134-swar
   // two units converged; only one actually is.
   // ===========================================================================
   test("7 lying-conductor: falsely-claimed-converged unit re-verify-refused", () => {
-    const proj = makeSwarmFixture();
+    const proj = makeSwarmFixture(["win", "lie"]);
     runRef(proj, ["prepare", "--batch", "2", "--units", "win,lie", "--base", "main"]);
     // `win` genuinely converges; `lie` does NOT (no impl) but is falsely claimed.
     writeFileSync(join(wtPath(proj, "win"), "win.txt"), "done\n");
@@ -721,7 +1069,7 @@ describe("t134 swarm referee — prepare/check/finalize (migrated from t134-swar
     // The .sh asserted cases 7 + 9 on a single finalize run; re-prove case 9
     // standalone on a fresh fixture so the tally invariant is independently
     // anchored.
-    const proj = makeSwarmFixture();
+    const proj = makeSwarmFixture(["wn", "le"]);
     runRef(proj, ["prepare", "--batch", "2", "--units", "wn,le", "--base", "main"]);
     writeFileSync(join(wtPath(proj, "wn"), "wn.txt"), "done\n");
     logWorktreeReview(proj, "wn");
@@ -748,7 +1096,7 @@ describe("t134 swarm referee — prepare/check/finalize (migrated from t134-swar
   // edited is re-verify-rejected even though the check command keys off it.
   // ===========================================================================
   test("8 finalize anti-tamper: tampered claimed unit re-verify-rejected", () => {
-    const proj = makeSwarmFixture();
+    const proj = makeSwarmFixture(["delta"]);
     mkdirSync(join(proj, "spec"), { recursive: true });
     writeFileSync(join(proj, "spec", "unit.test"), "EXPECTED\n");
     spawnSync("git", ["add", "-A"], { cwd: proj, encoding: "utf-8" });
@@ -787,7 +1135,7 @@ describe("t134 swarm referee — prepare/check/finalize (migrated from t134-swar
   // Case 10: loud-degrade — prepare --degraded-from ultracode emits SWARM_DEGRADED.
   // ===========================================================================
   test("10 loud-degrade: prepare --degraded-from ultracode emits SWARM_DEGRADED", () => {
-    const proj = makeSwarmFixture();
+    const proj = makeSwarmFixture(["epsilon"]);
     runRef(proj, [
       "prepare",
       "--batch",
@@ -809,7 +1157,7 @@ describe("t134 swarm referee — prepare/check/finalize (migrated from t134-swar
   // typed error on check, not a silently-disabled anti-tamper guard.
   // ===========================================================================
   test("11 path-confinement: a ../ --test-file is a typed error, not a disabled guard", () => {
-    const proj = makeSwarmFixture();
+    const proj = makeSwarmFixture(["zeta"]);
     runRef(proj, ["prepare", "--batch", "1", "--units", "zeta", "--base", "main"]);
     writeFileSync(join(wtPath(proj, "zeta"), "impl.txt"), "done\n");
     const c = runRef(proj, [
@@ -835,7 +1183,7 @@ describe("t134 swarm referee — prepare/check/finalize (migrated from t134-swar
   // determinism->tool records) instead of the cap-exhausted default.
   // ===========================================================================
   test("12 conductor attribution: --reasons unsatisfiable lands the typed reason (envelope + audit)", () => {
-    const proj = makeSwarmFixture();
+    const proj = makeSwarmFixture(["stuck"]);
     runRef(proj, ["prepare", "--batch", "1", "--units", "stuck", "--base", "main"]);
     // `stuck` gets no impl and is NOT claimed; the conductor attributes unsatisfiable.
     const f = runRef(proj, [
@@ -869,7 +1217,7 @@ describe("t134 swarm referee — prepare/check/finalize (migrated from t134-swar
   // applies only to DECLINED units, never to launder a claimed-but-red one.
   // ===========================================================================
   test("13 --reasons cannot override the lying-conductor guard: claimed-but-red stays error", () => {
-    const proj = makeSwarmFixture();
+    const proj = makeSwarmFixture(["sneaky"]);
     runRef(proj, ["prepare", "--batch", "1", "--units", "sneaky", "--base", "main"]);
     // sneaky is CLAIMED converged but no impl exists; the conductor also tries to
     // dress the failure as unsatisfiable via --reasons. The tool must ignore that
@@ -907,7 +1255,7 @@ describe("t134 swarm referee — prepare/check/finalize (migrated from t134-swar
   // finalize retry scoped to the unit merges cleanly.
   // ===========================================================================
   test("14 merge failure: converged-but-unmerged unit gets no SWARM_UNIT_CONVERGED row", () => {
-    const proj = makeSwarmFixture();
+    const proj = makeSwarmFixture(["orphan"]);
     runRef(proj, ["prepare", "--batch", "1", "--units", "orphan", "--base", "main"]);
     writeFileSync(join(wtPath(proj, "orphan"), "impl.txt"), "done\n");
     logWorktreeReview(proj, "orphan");

@@ -123,8 +123,12 @@ export function isCompiledModuleUrl(url: string): boolean {
   return /\/(?:\$bunfs|%7ebun|~bun)\//i.test(url.replace(/\\/g, "/"));
 }
 
-export function isCompiledExecutable(): boolean {
-  return isCompiledModuleUrl(import.meta.url);
+export function isCompiledExecutable(
+  moduleUrl = import.meta.url,
+  executable = process.execPath,
+): boolean {
+  const executableName = basename(executable.replace(/\\/g, "/")).toLowerCase();
+  return isCompiledModuleUrl(moduleUrl) || !executableName.startsWith("bun");
 }
 
 export function compiledExecutable(): string | null {

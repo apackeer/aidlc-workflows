@@ -150,7 +150,7 @@ function expectDesignedAbsences(directive: Directive): string[] {
   return absent.map((entry) => entry.path);
 }
 
-function birthExpress(p: string): void {
+function createExpressIntent(p: string): void {
   const result = utility(p, [
     "intent-create",
     "--scope",
@@ -209,7 +209,7 @@ function runThroughBuild(p: string): void {
   )).toBe(true);
   approve(p, "build-and-test", [
     "construction/build-and-test/build-and-test-summary.md",
-    "construction/build-and-test/build-test-results.md",
+    "construction/build-and-test/test-results.md",
   ]);
   expect(stateField(p, "Lifecycle Phase")).toBe("OPERATION");
 }
@@ -271,7 +271,7 @@ describe("t301 express scope routing (deterministic CLI journey)", () => {
 
   test("engine completes Express when the conditional deploy tail does not apply", () => {
     const p = project();
-    birthExpress(p);
+    createExpressIntent(p);
     runThroughBuild(p);
 
     for (const stage of [
@@ -293,7 +293,7 @@ describe("t301 express scope routing (deterministic CLI journey)", () => {
 
   test("engine completes the Express deploy tail using explicit workspace fallbacks", () => {
     const p = project();
-    birthExpress(p);
+    createExpressIntent(p);
     runThroughBuild(p);
 
     const pipeline = next(p);

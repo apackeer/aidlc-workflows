@@ -67,6 +67,8 @@ const BLOCKED = [
   "revise",
   "skip",
   "park",
+  "refresh-unit-progress",
+  "fold-unit-merge",
 ] as const;
 const STAGES_ROOT = join(REPO_ROOT, "core", "aidlc-common", "stages");
 const NON_INITIALIZATION_STAGES = [
@@ -429,7 +431,9 @@ describe("t242 state-transition ownership guard", () => {
       env: unownedEnv(),
     });
     expect(delegated.status).toBe(2);
-    expect(delegated.stderr).toContain("workflow lifecycle and routing are conductor-owned");
+    expect(delegated.stderr).toContain(
+      "only the main workflow session can change stage status or routing",
+    );
 
     const conductor = spawnSync(process.execPath, [HOOK], {
       input: JSON.stringify({
@@ -472,7 +476,7 @@ describe("t242 state-transition ownership guard", () => {
       });
       expect(delegated.status, command).toBe(2);
       expect(delegated.stderr, command).toContain(
-        "workflow lifecycle and routing are conductor-owned",
+        "only the main workflow session can change stage status or routing",
       );
     }
   });
@@ -541,7 +545,7 @@ describe("t242 state-transition ownership guard", () => {
     expect(r.status).toBe(2);
     expect(r.stdout).toBe("");
     expect(r.stderr).toContain(
-      "Direct aidlc-state.ts gate-start is blocked",
+      "Stage status cannot be changed with aidlc-state.ts gate-start",
     );
     expect(r.stderr).toContain("aidlc-orchestrate.ts report");
   });
@@ -560,7 +564,7 @@ describe("t242 state-transition ownership guard", () => {
       );
       expect(r.status, `${verb}: ${r.stdout}${r.stderr}`).toBe(1);
       expect(`${r.stdout}${r.stderr}`).toContain(
-        `Direct aidlc-state.ts ${verb} is blocked`,
+        `Stage status cannot be changed with aidlc-state.ts ${verb}`,
       );
     }
   });
@@ -578,7 +582,7 @@ describe("t242 state-transition ownership guard", () => {
     );
     expect(r.status).toBe(1);
     expect(`${r.stdout}${r.stderr}`).toContain(
-      "Direct aidlc-state.ts gate-start is blocked",
+      "Stage status cannot be changed with aidlc-state.ts gate-start",
     );
   });
 
@@ -588,6 +592,7 @@ describe("t242 state-transition ownership guard", () => {
     seedStateFile(project, join(FIXTURES_DIR, "state-mid-ideation.md"));
     const env = unownedEnv();
     env.AIDLC_SKIP_ARTIFACT_GUARD = "1";
+    env.AIDLC_SKIP_SUMMARY_CONFIRMATION_GUARD = "1";
     const r = spawnSync(
       process.execPath,
       [
@@ -633,9 +638,8 @@ describe("t242 state-transition ownership guard", () => {
       );
       expect(r.status, `${result}: ${r.stdout}${r.stderr}`).toBe(0);
       expect(r.stdout, result).toContain('"kind":"error"');
-      expect(r.stdout, result).toMatch(
-        result === "approved" ? /requires --user-input/ : /requires nonblank/,
-      );
+      expect(r.stdout, result).toContain("did not match an offered choice");
+      expect(r.stdout, result).toContain("original held gate with every offered choice");
       expect(readFileSync(seededStateFile(project), "utf-8"), result).toContain(
         "- [-] feasibility",
       );
@@ -685,7 +689,7 @@ describe("t242 state-transition ownership guard", () => {
     expect(r.stdout.trim()).toBe("feasibility");
   });
 
-  test("non-initialization stages delegate lifecycle transitions and owned Learn writes", () => {
+  test("non-initialization stages delegate lifecycle transitions and Learn writes through §13", () => {
     expect(NON_INITIALIZATION_STAGES).toHaveLength(30);
     for (const path of NON_INITIALIZATION_STAGES) {
       const body = readFileSync(path, "utf-8");
@@ -702,13 +706,11 @@ describe("t242 state-transition ownership guard", () => {
       expect(body, label).not.toMatch(DIRECT_STATE_HEADING);
       expect(body, label).not.toMatch(DIRECT_PHASE_BOOKKEEPING);
 
-      if (slug === "practices-discovery") continue;
-      // The Learn routing must match what §13 and aidlc-learnings.ts actually
-      // write: project.md (default) / team.md (promoted). No phases/ tier, no
-      // org tier — the tool has no write path for either.
-      expect(body, label).toContain(
-        "`aidlc/spaces/<active-space>/memory/project.md` (default) or `team.md` (promoted)",
-      );
+      // Stage files carry only the compact pointer; §13 owns routing and the
+      // aidlc-learnings.ts tool owns writes. No retired direct-write target may
+      // return to a stage body.
+      expect(body, label).toContain("stage-protocol.md §13");
+      expect(body, label).toContain("aidlc-learnings.ts");
       expect(body, label).not.toContain("memory/phases/<phase>.md");
       expect(body, label).not.toContain("memory/<org|team|project>.md");
       expect(body, label).not.toContain(

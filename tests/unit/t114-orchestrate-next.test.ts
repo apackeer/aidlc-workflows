@@ -70,7 +70,7 @@
 
 import { afterEach, beforeAll, describe, expect, test } from "bun:test";
 import { spawnSync } from "node:child_process";
-import { existsSync, readFileSync } from "node:fs";
+import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import {
   AIDLC_SRC,
@@ -159,6 +159,30 @@ describe("t114 happy path: in-flight current stage -> run-stage", () => {
     proj = createOrchestrationTestProject();
     seedStateFile(proj, BROWNFIELD_INIT_DONE);
     expect(runNext(proj, []).out).toContain('"stage":"reverse-engineering"');
+  });
+
+  test("untracked-only completions route normally without a per-turn advisory", () => {
+    proj = createOrchestrationTestProject();
+    seedStateFile(proj, MID_IDEATION);
+    const statePath = seededStateFile(proj);
+    const state = readFileSync(statePath, "utf-8")
+      .replace("- [-] feasibility — EXECUTE", "- [x] feasibility — EXECUTE")
+      .replace("- [ ] scope-definition — EXECUTE", "- [-] scope-definition — EXECUTE")
+      .replace("- **Current Stage**: feasibility", "- **Current Stage**: scope-definition")
+      .replace("- **Next Stage**: scope-definition", "- **Next Stage**: team-formation");
+    writeFileSync(statePath, state, "utf-8");
+    const result = spawnSync(BUN, [TOOL, "next", "--project-dir", proj], {
+      cwd: proj,
+      encoding: "utf-8",
+      env: { ...process.env },
+    });
+    expect(result.status).toBe(0);
+    const directive = JSON.parse((result.stdout ?? "").trim()) as {
+      kind: string;
+      stage_validity?: unknown;
+    };
+    expect(directive.kind).toBe("load-steering");
+    expect(directive.stage_validity).toBeUndefined();
   });
 });
 
@@ -299,12 +323,12 @@ describe("t114 in-session config alias", () => {
 
 // ===========================================================================
 // Help-request routing: bare help tokens and `intent help`/`space help` must
-// print help, never enter the birth funnel or a switch attempt.
+// print help, never enter the creation funnel or a switch attempt.
 // ===========================================================================
 describe("t114 help-request routing", () => {
-  test("sole bare `help` on a fresh workspace -> help print, not a birth ask", () => {
+  test("sole bare `help` on a fresh workspace -> help print, not a creation ask", () => {
     // Without the sole-token special case, `help` fell into intentWords and
-    // Branch 8 offered to birth an intent literally named "help".
+    // Branch 8 offered to create an intent literally named "help".
     proj = createOrchestrationTestProject();
     const out = runNext(proj, ["help"]).out;
     expect(out).toContain('"kind":"print"');
@@ -312,7 +336,7 @@ describe("t114 help-request routing", () => {
     expect(out).not.toContain('"kind":"ask"');
   });
 
-  test("sole bare `-h` on a fresh workspace -> help print, not a birth ask", () => {
+  test("sole bare `-h` on a fresh workspace -> help print, not a creation ask", () => {
     proj = createOrchestrationTestProject();
     const out = runNext(proj, ["-h"]).out;
     expect(out).toContain('"kind":"print"');
@@ -429,7 +453,7 @@ describe("t114 knowledge (DocumentKB) terminal routing", () => {
   // The engine parser and the classifier are separate code paths whose comments
   // require byte-for-byte agreement. These cases assert the ENGINE half: a
   // knowledge verb must emit a terminal print directive naming
-  // aidlc-knowledge.ts, never a workflow directive and never an intent-birth ask.
+  // aidlc-knowledge.ts, never a workflow directive and never an intent-create ask.
   test("every verb routes to aidlc-knowledge.ts and never enters the workflow funnel", () => {
     for (const verb of ["onboard", "sync", "list", "show", "associate", "dissociate", "rebind"]) {
       proj = createOrchestrationTestProject();
@@ -478,7 +502,7 @@ describe("t114 knowledge (DocumentKB) terminal routing", () => {
     expect(missing).toContain("missing verb for noun 'knowledge'");
     expect(unknown).toContain('"kind":"error"');
     expect(unknown).toContain("unknown verb 'remove' for noun 'knowledge'");
-    // Not an ask: `knowledge remove` must not offer to birth an intent.
+    // Not an ask: `knowledge remove` must not offer to create an intent.
     expect(`${missing}${unknown}`).not.toContain('"kind":"ask"');
   });
 });
@@ -705,6 +729,7 @@ describe("t114 mid-flow freeform prose -> routing ask (Branch 9c)", () => {
       question?: string;
       new_work_description?: string;
       proposed_scope?: string;
+      numbered_prose_question?: string;
     };
     expect(out).toContain('"kind":"ask"');
     expect(directive.ask_type).toBe("new-work-routing");
@@ -720,6 +745,13 @@ describe("t114 mid-flow freeform prose -> routing ask (Branch 9c)", () => {
     expect(out).toContain("continue");
     expect(out).toContain("Yes, set it up alongside");
     expect(out).toContain("plan");
+    expect(directive.question).toContain("(1)");
+    expect(directive.question).toContain("(2)");
+    expect(directive.question).toContain("(3)");
+    expect(directive.numbered_prose_question).toContain(
+      "1. **Part of the active work**",
+    );
+    expect(directive.numbered_prose_question).toContain("4. **Other**");
     expect(directive.question).toContain(
       `as "${directive.proposed_scope}" work`,
     );
@@ -750,7 +782,7 @@ describe("t114 mid-flow freeform prose -> routing ask (Branch 9c)", () => {
     expect(out).toContain("scope change --scope bugfix");
   });
 
-  test("--new-intent with prose still births (Branch 4a precedes the ask)", () => {
+  test("--new-intent with prose still creates (Branch 4a precedes the ask)", () => {
     proj = createOrchestrationTestProject();
     seedStateFile(proj, MID_IDEATION);
     const out = runNext(proj, ["--new-intent", "--scope", "poc", "a standalone dashboard"]).out;

@@ -81,14 +81,18 @@ fields that carry the structural weight:
 | `consumes` | The artifacts this stage reads, each with a `required` boolean |
 | `produces` | The artifacts this stage writes (its forward edges) |
 | `lead_agent` | The persona that owns the stage |
-| `support_agents` | Optional perspectives the conductor loads after the lead |
+| `support_agents` | Optional perspectives the conductor loads after the lead; pipeline chains require unique agents |
 | `mode` | `inline`, `subagent`, `pipeline`, `mob`, or the reserved `agent-team` |
 | `for_each` | Optional — names an artifact whose instances drive iteration |
 | `summary_confirmation` | Optional — `required` for stages that always collect file-backed answers, `if-present` for conditional question flows |
+| `reviewer` / `review_artifact` | Optional pair — the review agent and the required Markdown `produces` entry that exclusively owns its `## Review` appendix |
 
 The body opens with `## Steps` — the imperative prose the lead agent follows.
-The `## Sensors` and `## Learn` compartments come after it. For the complete
-field table, types, and constraints, see
+The `## Sensors` compartment then summarizes output location, exact frontmatter
+imports, and upstream targets; preserve any stage-specific sensor exception.
+The final `## Learn` compartment points to `stage-protocol.md` §13, with the
+bootstrap no-gate exception where applicable. For the complete field table,
+types, and constraints, see
 [Field reference — when to use](../reference/15-stage-definition.md#field-reference-when-to-use).
 
 ### 3. Wire the dependency edges so the graph places it
@@ -111,6 +115,10 @@ wiring, and they must agree with each other:
 - **`produces`** lists the forward edges. When a downstream stage asks "who
   produces artifact Z?", the graph answers via `producersOf()` — so the stage
   that declares `produces: [Z]` is the one that gets wired in upstream of it.
+  Every consumed artifact must resolve to exactly one producer across
+  `produces` and `optional_produces`; `aidlc-graph compile` rejects duplicates
+  and names both producer files. Reusing an artifact name is valid only when no
+  stage consumes it.
 
 Get these three consistent and the compiler places the stage automatically;
 you never edit `stage-graph.json` by hand to position it. The nuances of
@@ -192,7 +200,9 @@ aidlc engine orchestrate next --stage <your-slug> --single
 The engine's `--single` mode runs that one stage in isolation. It emits a single
 `run-stage` directive for the stage (with its lead agent, resolved
 consumes/produces paths, rules, and sensors), the conductor runs it, and a
-synthetic-id `STAGE_STARTED`/`STAGE_COMPLETED` pair is committed to the audit log.
+synthetic-id lifecycle is committed to the audit log: `next --single` records
+`STAGE_STARTED` before dispatch, and `report --single` requires that boundary
+before recording `STAGE_COMPLETED`.
 The directive carries `single: true`, so the conductor runs the configured body,
 topology, reviewer, and completion checks, reports once with
 `report --single --stage <slug> --result completed`, and stops on `done`. It does
@@ -255,7 +265,8 @@ the Developer Reference.
   compile (`lead_agent "<name>" has no matching .claude/agents/*.md`), so a
   typo can't ship a graph that 404s at run time. The reserved `orchestrator`
   slug (the conductor itself, used on the bootstrap initialization stages) is
-  exempt — it has no agent file.
+  exempt — it has no agent file. Pipeline stages also reject duplicate chain
+  identities across `lead_agent` and `support_agents`.
 - **CI drift guard.** `aidlc engine graph compile --check` exits
   `0` on a clean tree and exits `1` if any stage YAML was edited without
   recompiling the JSON. CI runs this, so a forgotten `compile` blocks the merge

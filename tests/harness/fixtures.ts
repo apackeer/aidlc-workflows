@@ -130,6 +130,7 @@ export function withEnvAndFreshCaches<T>(
  */
 export function resetAidlcEnv(): void {
   delete process.env.AWS_AIDLC_DEFAULT_SCOPE;
+  delete process.env.AIDLC_SKIP_SOURCE_FRESHNESS;
 }
 
 /**
@@ -206,7 +207,7 @@ export function runOrchestrateNext(
     env?: Record<string, string | undefined>;
   } = {},
 ): OrchestrateTestResult {
-  let command = ["next", ...args, "--project-dir", proj];
+  let command = ["next", "--project-dir", proj, ...args];
   let stderr = "";
   const steering: Record<string, unknown>[] = [];
 
@@ -511,9 +512,11 @@ export function setupWorktreeFixture(): string {
   };
   git(["init", "-q"]);
   git(["symbolic-ref", "HEAD", "refs/heads/main"]);
+  git(["config", "user.email", "t@x"]);
+  git(["config", "user.name", "t"]);
   writeFileSync(join(proj, "README.md"), "seed\n");
   git(["add", "README.md"]);
-  git(["-c", "user.email=t@x", "-c", "user.name=t", "commit", "-qm", "init"]);
+  git(["commit", "-qm", "init"]);
   // Seed the per-intent workspace shell + default record so the data-path
   // helpers (and the worktree-mirror resolution that threads relativeRecordDir)
   // anchor under aidlc/spaces/default/intents/<record>/ instead of a flat
@@ -708,8 +711,8 @@ export function setupIntegrationProject(
 //
 // The live multi-repo·intent·space journey needs a workspace whose shape the
 // per-intent fixtures above never model: TWO sibling code repos under one
-// workspace root, the shipped harness shell, and NO pre-born intent (the
-// journey's step 1 auto-births it live). setupWorkspaceJourney() builds that.
+// workspace root, the shipped harness shell, and NO pre-created intent (the
+// journey's step 1 auto-creates it live). setupWorkspaceJourney() builds that.
 //
 // Why a fresh tmpdir root (not createTestProject's reuse): the journey's
 // construction beat forks git worktrees INSIDE the sibling repos, and
@@ -764,7 +767,7 @@ function gitInit(dir: string, seedFile: string): void {
  * shipped dist/<harness>/ shell (engine dir + the sibling aidlc/ memory shell)
  * into a fresh os.tmpdir() root, then git-init's two sibling repos (repo-a,
  * repo-b) as immediate children so discoverSiblingRepos finds them sorted. Does
- * NOT auto-birth an intent — the journey's step 1 does that live; the shell ships
+ * NOT auto-create an intent - the journey's step 1 does that live; the shell ships
  * the default space's memory only.
  *
  * Each repo gets a tiny brownfield-ish source file + an initial commit so a

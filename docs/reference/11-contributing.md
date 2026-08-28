@@ -4,7 +4,7 @@
 
 Contributions to this implementation are welcome. This guide covers prerequisites, development workflow, testing, and how to submit changes.
 
-> **Path convention.** `<record>/` below = a born intent's record dir,
+> **Path convention.** `<record>/` below = a created intent's record dir,
 > `aidlc/spaces/<space>/intents/<YYMMDD>-<label>/` — where per-intent state, audit
 > shards, knowledge, and artifacts live.
 
@@ -44,7 +44,7 @@ For the full architecture, see [reference/01-architecture.md](01-architecture.md
 
 1. **Fork and branch** from `v2` (the integration branch and PR target), then run `bun install --frozen-lockfile`
 2. **Read the architecture** -- [reference/01-architecture.md](01-architecture.md) explains the execution model, agent delegation, and hook system
-3. **Understand the entry points** -- the deterministic engine `core/tools/aidlc-orchestrate.ts` (with exactly four subcommands: `next`, `continue`, `report`, and `park`; `continue` is internal steering transport) owns routing; the conductor `harness/claude/skills/aidlc/SKILL.md` is a thin forwarding loop that acts on its directives. For the normative engine / directive / conductor / swarm contract see [The Skill System](17-skill-system.md)
+3. **Understand the entry points** -- the deterministic engine `core/tools/aidlc-orchestrate.ts` (with exactly five subcommands: `next`, `continue`, `report`, `park`, and `team-board`; `continue` is internal steering transport and `team-board` is the read-only Team Construction query) owns routing; the conductor `harness/claude/skills/aidlc/SKILL.md` is a thin forwarding loop that acts on its directives. For the normative engine / directive / conductor / swarm contract see [The Skill System](17-skill-system.md)
 4. **Make changes** -- Edit the harness-neutral source in `core/` (tools, stages, agents, hooks, rules, knowledge) or a harness surface in `harness/<name>/` (the orchestrator skill, settings). Then run `bun scripts/package.ts` to materialize the ignored local `dist/` and `dist-release/` roots. Never hand-edit or commit either root. `package.ts --check` ignores those on-disk trees, builds the complete projection set twice in independent temporary roots, and byte-compares the results.
 5. **Test** -- Run `bun tests/run-tests.ts` before submitting
 6. **Submit** -- Open a PR against `v2`
@@ -57,7 +57,8 @@ for the release matrix. The script writes each executable under
 target's `runtime/<harness>/` directory, and writes
 `build/binaries/build-results-<target>.json`. Targets executable on the build
 host run sensors, graph compilation, validation, generated-surface checks,
-plugin selection/composition, orchestration, Bolt/Swarm composition,
+plugin selection/composition, orchestration, ordinary Bolt and autonomous
+swarm composition,
 packaged-runtime immutability, hooks, statusline, adapters, explicit project
 routing, doctor JSON, init dry-run, versions/plugin listings, Unix completions,
 and package verification without a `bun` executable on `PATH`. Cross artifacts
@@ -170,11 +171,31 @@ For handlers that require no LLM reasoning (print text, read/format files, check
 
 The `--help`, `--version`, `--status`, and `--doctor` handlers are reference implementations. `--doctor` also accepts `--export` (with an optional `--output <dir>`), which runs a fresh doctor pass and then writes a small, redacted diagnostic report; the shared `DoctorFinding` model and the report-assembly logic live in `core/tools/aidlc-doctor-bundle.ts`, so the live report and the exported report draw from one set of findings.
 
-The `codekb-path` handler is a read-only utility verb reached through
-`aidlc engine workspace codekb`, not a chat command. It emits NO audit event, drives
-NO SKILL.md task tracking, and creates NO directory (`mkdir`). It simply prints
-the canonical per-repo codekb directory the reverse-engineering stage writes
-its artifacts into, so prose never hand-derives that path.
+The `codekb-path`, `codekb-snapshot`, `codekb-publish`, and
+`codekb-scope-diff` handlers are **direct utility verbs**: stage prose invokes
+`bun <harness-dir>/tools/aidlc-utility.ts <verb>`, not `/aidlc <verb>`
+(`codekb-path` is also reachable through the dispatcher as
+`aidlc engine workspace codekb`).
+`codekb-path` and `codekb-scope-diff` are read-only. `codekb-snapshot` may
+recover an interrupted prior CodeKB directory swap before returning the
+source/store generations. `codekb-publish` is the sole shared-store writer: it
+validates a complete nine-file candidate and commits it under a space+repo
+compare-and-swap lock. None emits an audit event or drives SKILL.md task
+tracking.
+
+`project-description` and `document-input` use the same read-only direct-utility
+shape. Both consuming stages invoke `project-description` first: a marked
+record must decode its exact `project-description.json` string, while an
+unmarked pre-2.6.115 record explicitly falls back to the legacy `Project` state
+field. They invoke
+`bun <harness-dir>/tools/aidlc-utility.ts document-input` after writing the
+selected path with the native file-write tool to the active record's fixed
+`.aidlc-document-input-path` transport. Customer-chosen path bytes never enter
+the shell command. The handler resolves one exact project-root path, records
+the contained file identity, and requires the opened descriptor to match it
+before reading; parent-directory replacement, redirects, and unsupported input
+are refused. Successful reads emit the same inline untrusted-path and
+untrusted-content notices as DocumentKB.
 
 ### LLM-driven handlers
 For handlers that benefit from agent reasoning (filesystem scanning, decision-making):
@@ -193,7 +214,7 @@ A scope is authored as a file (its identity) plus a per-stage membership tag. Th
 1. **Create `core/scopes/aidlc-hotfix.md`** — the scope's identity. Frontmatter:
    - `name` (required): the scope name; must equal the filename stem.
    - `depth` (required): `Minimal` | `Standard` | `Comprehensive`.
-   - `keywords` (optional): NL triggers for `/aidlc <freeform text>` auto-detection. Word-boundary matched, alphabetical-scope tie-break. Empty list opts out of inference.
+   - `keywords` (optional): NL triggers for `/aidlc <freeform text>` auto-detection. Flat string lists may use block (`- item`) or flow (`[item, item]`) form. Word-boundary matched, alphabetical-scope tie-break. Empty list opts out of inference.
    - `description` (optional): one-line summary rendered in `/aidlc --help` and in SKILL.md's compiled scope-table.
    - `testStrategy` (optional): override test strategy independent of depth. Defaults to matching depth.
    - `review_cap` (optional): `adversarial` | `advisory` | `none`. Caps stage review classes for this scope; absence means no scope-level lowering. The cap can lower but never raise a stage declaration. Autonomous swarm reviews are exempt.
@@ -304,7 +325,7 @@ Agent metadata (display name, example knowledge files) is read from each agent's
 
 2. **Verify the agent is discovered** — `bun -e "import { loadAgents } from 'core/tools/aidlc-lib.ts'; console.log(loadAgents().find(a => a.slug === '<slug>-agent'));"` should print the new agent's metadata.
 
-3. **Verify intent birth creates the space knowledge dir** — `bun core/tools/aidlc-utility.ts intent-create --scope poc --project-dir /tmp/agent-smoke` should create the empty space-level `aidlc/knowledge/` directory (a sibling of the space's `intents/`). Birth does not seed per-agent subdirectories or READMEs — the team creates `aidlc/knowledge/<slug>-agent/` itself when it has content.
+3. **Verify intent creation creates the space knowledge dir** - `bun core/tools/aidlc-utility.ts intent-create --scope poc --project-dir /tmp/agent-smoke` should create the empty space-level `aidlc/knowledge/` directory (a sibling of the space's `intents/`). Creation does not seed per-agent subdirectories or READMEs - the team creates `aidlc/knowledge/<slug>-agent/` itself when it has content.
 
 4. **Verify the statusline renders** — seed a state file with `Active Agent: <slug>-agent` and invoke the statusline hook; the output should include the display name after the `--` separator.
 
@@ -315,7 +336,7 @@ Agent metadata (display name, example knowledge files) is read from each agent's
 - `loadAgents()` discovers any new `.md` file in `.claude/agents/` on next invocation — no code edit.
 - The parser throws if `name` or `display_name` is missing, naming the file and the missing field.
 - Agents are returned alphabetically sorted by slug, so `readdirSync` order on any platform produces the same output.
-- Intent birth creates the empty space-level `aidlc/knowledge/` directory (it does not seed per-agent subdirectories or READMEs).
+- Intent creation creates the empty space-level `aidlc/knowledge/` directory (it does not seed per-agent subdirectories or READMEs).
 - Statusline rendering derives the display name from the same metadata source.
 - `tests/unit/t61.test.ts` asserts all five properties end-to-end against a fixture agent.
 
@@ -324,7 +345,7 @@ Agent metadata (display name, example knowledge files) is read from each agent's
 - **Stage-graph participation**. Stage frontmatter references agents by slug in its `lead_agent` / `support_agents` fields, and `aidlc-graph.ts compile` carries those into `stage-graph.json`. Adding a new agent without naming it in any stage's frontmatter means the agent exists but never runs. Stage-graph schema validation (`core/tools/aidlc-stage-schema.ts`) is wired in: `aidlc-graph.ts compile` validates every stage's frontmatter (and `compile --check` is the CI drift guard), and `/aidlc --doctor` re-runs the same `validateStageFrontmatter` plus a "Graph references" check that every `lead_agent` / `support_agents` slug resolves.
 - **Knowledge file existence**. `examples` is a list of suggested filenames documented in the agent→examples table — they're not created or validated. Users place the actual content in `aidlc/knowledge/<agent>/` (the space-level knowledge dir).
 - **Doc tables listing agents**. The Phase Participation matrix at `docs/reference/05-agent-system.md:119-131` and the agent→examples table at `core/knowledge/aidlc-shared/knowledge-readme-template.md:16-29` are maintained by hand. Update them in the same PR that adds the agent (see Documentation Policy below).
-- **`.claude/agents/<new-agent>.md` body content**. Only the frontmatter is parsed. The body prose (Core Responsibilities, Knowledge Loading sequence, etc.) is read by the agent itself when activated — write it to match the existing agent files' structure.
+- **`.claude/agents/<new-agent>.md` body content**. Only the frontmatter is parsed. The body prose (Core Responsibilities, Collaboration, optional Memory Focus, Key Principles) is read by the agent itself when activated — write it to match the existing agent files' structure.
 
 ## Documentation Policy
 

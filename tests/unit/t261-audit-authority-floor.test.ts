@@ -1,4 +1,4 @@
-// covers: cli:aidlc-audit(append-protected,append-batch-protected,append-raw-event-line,reserved-field-keys), subcommand:aidlc-bolt:set-autonomy, function:humanActedSinceGate, function:hasUnsafeSingleLineCharacter, function:isNonAnswer, function:selfAttributedDecisionMarker, function:isAutonomousConstructionDecision
+// covers: cli:aidlc-audit(append-protected,append-batch-protected,append-raw-event-line,reserved-field-keys), subcommand:aidlc-bolt:set-autonomy, function:humanActedSinceGate, function:hasUnsafeSingleLineCharacter, function:isNonAnswer, function:formatReceivedReply, function:selfAttributedDecisionMarker, function:isAutonomousConstructionDecision
 //
 // t261 — the authority floor on the audit surface (issue 681, claims 3/4/7/8).
 // Four related guarantees, each with a REFUSE case and an ALLOW case so the
@@ -52,7 +52,7 @@
 import { afterEach, describe, expect, test } from "bun:test";
 import { spawn, spawnSync } from "node:child_process";
 import { appendFileSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import {
   AIDLC_SRC,
   cleanupTestProject,
@@ -149,15 +149,22 @@ afterEach(() => {
 
 describe("t261 public audit CLI refuses authority-bearing receipts", () => {
   const PROTECTED = [
+    "STAGE_COMPLETED",
     "HUMAN_TURN",
     "GATE_APPROVED",
     "GATE_REJECTED",
     "QUESTION_ANSWERED",
+    "PLAN_APPROVAL_RECORDED",
     "REVIEW_REQUESTED",
     "REVIEW_COMPLETED",
+    "PIPELINE_LINK_COMPLETED",
+    "ARTIFACT_REUSED",
     "SWARM_STARTED",
     "SWARM_UNIT_CONVERGED",
+    "SWARM_SOURCE_MERGED",
     "AUTONOMY_MODE_SET",
+    "UNIT_OWNERSHIP_SET",
+    "UNIT_GATE_RHYTHM_SET",
     "UNIT_STARTED",
     "UNIT_PAUSED",
     "UNIT_RESUMED",
@@ -173,6 +180,7 @@ describe("t261 public audit CLI refuses authority-bearing receipts", () => {
       expect(r.out).toContain(event);
     }
     // nothing landed on disk
+    expect(readAllAuditShards(proj)).not.toContain("STAGE_COMPLETED");
     expect(readAllAuditShards(proj)).not.toContain("HUMAN_TURN");
   });
 
@@ -180,13 +188,46 @@ describe("t261 public audit CLI refuses authority-bearing receipts", () => {
     proj = createTestProject();
     const entries = JSON.stringify([
       { eventType: "ERROR_LOGGED", fields: { Details: "x" } },
-      { eventType: "QUESTION_ANSWERED", fields: { Stage: "feasibility", Details: "y" } },
+      { eventType: "STAGE_COMPLETED", fields: { Stage: "feasibility", Details: "y" } },
     ]);
     const r = guarded(AUDIT, ["append-batch", entries], proj);
     expect(r.rc).not.toBe(0);
-    expect(r.out).toContain("QUESTION_ANSWERED");
+    expect(r.out).toContain("STAGE_COMPLETED");
     // the batch is all-or-nothing: the harmless entry must not have committed
     expect(readAllAuditShards(proj)).not.toContain("ERROR_LOGGED");
+    expect(readAllAuditShards(proj)).not.toContain("STAGE_COMPLETED");
+  });
+
+  test("receipt capture failure completes untracked with a visible warning", () => {
+    proj = autonomousConstructionProject();
+    const record = dirname(seededStateFile(proj));
+    const dagDir = join(record, "inception", "units-generation");
+    mkdirSync(dagDir, { recursive: true });
+    writeFileSync(
+      join(dagDir, "unit-of-work-dependency.md"),
+      "```yaml\nunits:\n  - name: api\n    kind: invalid-kind\n    depends_on: []\n```\n",
+      "utf-8",
+    );
+    const direct = {
+      AIDLC_ALLOW_DIRECT_STATE_TRANSITIONS: "1",
+      AIDLC_SKIP_ARTIFACT_GUARD: "1",
+    };
+    expect(
+      guarded(STATE, ["gate-start", "build-and-test"], proj, direct).rc,
+    ).toBe(0);
+    const approved = guarded(
+      STATE,
+      ["approve", "build-and-test", "--user-input", "Approve"],
+      proj,
+      direct,
+    );
+    expect(approved.rc, approved.out).toBe(0);
+    expect(approved.out).toContain("Validity receipt omitted");
+    const audit = readAllAuditShards(proj);
+    expect(audit).toContain("**Event**: GATE_APPROVED");
+    expect(audit).toContain("**Event**: STAGE_COMPLETED");
+    expect(audit).toContain("**Validation Warning**:");
+    expect(audit).not.toContain("**Validation Basis**:");
   });
 
   test("append-raw refuses a body carrying a taxonomy **Event**: line", () => {
@@ -457,8 +498,37 @@ describe("t261 cancellation boilerplate is not a decision", () => {
     for (const details of ["Cancelled", "cancelled", "user dismissed", "Timed out", "   "]) {
       const r = guarded(LOG, ["answer", "--stage", "feasibility", "--details", details], proj);
       expect(r.rc).not.toBe(0);
+      expect(r.out).toContain("Cannot record reply");
     }
     expect(readAllAuditShards(proj)).not.toContain("QUESTION_ANSWERED");
+  });
+
+  test("summary confirmation refusal quotes and truncates the reply and names both valid choices", () => {
+    proj = ideationProject();
+    const invalid = `Use the defaults ${"x".repeat(180)}`;
+    const r = guarded(
+      LOG,
+      [
+        "answer",
+        "--stage",
+        "feasibility",
+        "--checkpoint",
+        "summary-confirmation",
+        "--questions-file",
+        "unused.md",
+        "--details",
+        invalid,
+      ],
+      proj,
+    );
+    expect(r.rc).not.toBe(0);
+    expect(r.out).toContain('reply \\"Use the defaults ');
+    expect(r.out).toContain('...\\"');
+    expect(r.out).not.toContain(invalid);
+    expect(r.out).toContain(
+      'Present \\"Looks correct\\" and \\"Request changes\\"',
+    );
+    expect(readAllAuditShards(proj)).not.toContain("SUMMARY_CONFIRMATION_RECORDED");
   });
 
   test("a substantive answer containing a cancellation word passes", () => {
@@ -481,11 +551,27 @@ describe("t261 cancellation boilerplate is not a decision", () => {
 
     const ap = guarded(STATE, ["approve", "feasibility", "--user-input", "cancelled"], proj, direct);
     expect(ap.rc).not.toBe(0);
+    expect(ap.out).toContain('the reply \\"cancelled\\"');
     expect(ap.out).toContain("cancellation boilerplate");
+    expect(ap.out).toContain("original question with every choice again");
 
-    const rj = guarded(STATE, ["reject", "feasibility", "--feedback", "Timed out"], proj, direct);
+    const rj = guarded(
+      STATE,
+      [
+        "reject",
+        "feasibility",
+        "--user-input",
+        "Request Changes",
+        "--feedback",
+        "Timed out",
+      ],
+      proj,
+      direct,
+    );
     expect(rj.rc).not.toBe(0);
+    expect(rj.out).toContain('revision feedback \\"Timed out\\"');
     expect(rj.out).toContain("cancellation boilerplate");
+    expect(rj.out).toContain("original held gate with every offered choice");
 
     // the real choice still commits (same turn: neither refusal consumed it)
     const ok = guarded(STATE, ["approve", "feasibility", "--user-input", "Approve"], proj, direct);
@@ -511,6 +597,51 @@ describe("t261 explicit decision self-attribution tripwire", () => {
     mintHumanTurn(p);
   }
 
+  test("solo approve/reject preserve state-precondition error precedence", () => {
+    proj = ideationProject();
+    const approve = guarded(
+      STATE,
+      ["approve", "scope-definition"],
+      proj,
+      DIRECT,
+    );
+    expect(approve.rc).not.toBe(0);
+    expect(approve.out).toContain(
+      "Stage scope-definition is in state 'pending'",
+    );
+    expect(approve.out).not.toContain("--user-input must contain");
+
+    const reject = guarded(
+      STATE,
+      ["reject", "scope-definition", "--feedback", "change it"],
+      proj,
+      DIRECT,
+    );
+    expect(reject.rc).not.toBe(0);
+    expect(reject.out).toContain(
+      "Stage scope-definition is in state 'pending'",
+    );
+    expect(reject.out).not.toContain("a real human has not acted");
+
+    mintHumanTurn(proj);
+    const attributed = guarded(
+      STATE,
+      [
+        "reject",
+        "scope-definition",
+        "--feedback",
+        "I, the conductor, am rejecting this.",
+      ],
+      proj,
+      DIRECT,
+    );
+    expect(attributed.rc).not.toBe(0);
+    expect(attributed.out).toContain(
+      "Stage scope-definition is in state 'pending'",
+    );
+    expect(attributed.out).not.toContain("decision self-attribution blocked");
+  });
+
   // This is deliberately a high-confidence tripwire, not proof of human
   // authorship. It rejects explicit self-attribution observed in issue 742 and
   // closely equivalent decision-noun variants.
@@ -529,9 +660,21 @@ describe("t261 explicit decision self-attribution tripwire", () => {
     proj = ideationProject();
     openGate(proj);
     const stateBefore = readFileSync(seededStateFile(proj), "utf-8");
-    const r = guarded(STATE, ["reject", "feasibility", "--feedback", feedback], proj, DIRECT);
+    const r = guarded(
+      STATE,
+      [
+        "reject",
+        "feasibility",
+        "--user-input",
+        "Request Changes",
+        "--feedback",
+        feedback,
+      ],
+      proj,
+      DIRECT,
+    );
     expect(r.rc).not.toBe(0);
-    expect(r.out).toContain("decision self-attribution blocked");
+    expect(r.out).toContain("--feedback says it was written by the assistant");
     expect(readFileSync(seededStateFile(proj), "utf-8")).toBe(stateBefore);
     const shards = readAllAuditShards(proj);
     expect(shards).not.toContain("GATE_REJECTED");
@@ -554,7 +697,7 @@ describe("t261 explicit decision self-attribution tripwire", () => {
       DIRECT,
     );
     expect(r.rc).not.toBe(0);
-    expect(r.out).toContain("decision self-attribution blocked");
+    expect(r.out).toContain("--user-input says the choice came from the assistant");
     expect(readAllAuditShards(proj)).not.toContain("GATE_APPROVED");
   });
 
@@ -573,7 +716,7 @@ describe("t261 explicit decision self-attribution tripwire", () => {
       proj,
     );
     expect(r.rc).not.toBe(0);
-    expect(r.out).toContain("decision self-attribution blocked");
+    expect(r.out).toContain("--details says it was chosen by the assistant");
     expect(readAllAuditShards(proj)).not.toContain("QUESTION_ANSWERED");
   });
 
@@ -609,7 +752,19 @@ describe("t261 explicit decision self-attribution tripwire", () => {
   test.each(SUBSTANTIVE)("reject --feedback accepts substantive human prose (%#)", (feedback) => {
     proj = ideationProject();
     openGate(proj);
-    const r = guarded(STATE, ["reject", "feasibility", "--feedback", feedback], proj, DIRECT);
+    const r = guarded(
+      STATE,
+      [
+        "reject",
+        "feasibility",
+        "--user-input",
+        "Request Changes",
+        "--feedback",
+        feedback,
+      ],
+      proj,
+      DIRECT,
+    );
     expect(r.rc).toBe(0);
     expect(readAllAuditShards(proj)).toContain("GATE_REJECTED");
   });
@@ -693,7 +848,14 @@ describe("t261 explicit decision self-attribution tripwire", () => {
     openGate(proj);
     const r = guarded(
       STATE,
-      ["reject", "feasibility", "--feedback", "NOT a human rejection."],
+      [
+        "reject",
+        "feasibility",
+        "--user-input",
+        "Request Changes",
+        "--feedback",
+        "NOT a human rejection.",
+      ],
       proj,
       DIRECT,
     );

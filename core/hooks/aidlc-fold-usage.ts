@@ -83,7 +83,9 @@ export async function run(input: string): Promise<number> {
   const [
     {
       resolveProjectDirFromHook,
-      stateFilePath,
+      resolveWorkflowSelection,
+      stateFilePathForSelection,
+      validSessionId,
       writeCurrentSessionId,
     },
     {
@@ -96,6 +98,7 @@ export async function run(input: string): Promise<number> {
     import("../tools/aidlc-usage.ts"),
   ]);
   if (usageTrackingDisabled()) return 0;
+  sessionId = validSessionId(sessionId) ?? "";
   const projectDir = resolveProjectDirFromHook(import.meta.url);
   const foldMode = hookEvent === "PreToolUse"
     ? await isLifecycleBoundaryToolCall(toolName, toolInput)
@@ -104,7 +107,10 @@ export async function run(input: string): Promise<number> {
     : "holdback";
   let currentStage: string | null = null;
   try {
-    const statePath = stateFilePath(projectDir);
+    const selection = resolveWorkflowSelection(projectDir, {
+      sessionId: sessionId || undefined,
+    });
+    const statePath = stateFilePathForSelection(projectDir, selection);
     if (existsSync(statePath)) {
       currentStage = currentStageSlug(readFileSync(statePath, "utf-8")) || null;
     }

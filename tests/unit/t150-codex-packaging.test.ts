@@ -45,9 +45,11 @@ const TRUST_SUFFIXES = [
   "pre_tool_use:2:0",
   "pre_tool_use:3:0",
   "pre_tool_use:4:0",
+  "pre_tool_use:5:0",
   "post_tool_use:0:0",
   "post_tool_use:1:0",
   "post_tool_use:2:0",
+  "post_tool_use:3:0",
   "pre_compact:0:0",
   "subagent_stop:0:0",
   "stop:0:0",
@@ -239,6 +241,7 @@ describe("t150 dist/codex packaging determinism + trust", () => {
     // workspace root, where codex runs), NOT the old .codex/aidlc-rules.
     const config = readFileSync(join(CODEX_DST, "config.toml"), "utf-8");
     expect(config).toContain('AIDLC_RULES_DIR = "aidlc/spaces/default/memory"');
+    expect(config).toContain("[agents]\nmax_depth = 1");
     // The compiled graph's rule display paths are harness-neutral now.
     const graph = readFileSync(join(CODEX_DST, "tools", "data", "stage-graph.json"), "utf-8");
     expect(graph).toContain('"aidlc/spaces/default/memory/org.md"');
@@ -255,7 +258,15 @@ describe("t150 dist/codex packaging determinism + trust", () => {
     );
     // Matchers per the verified tool-name map.
     const postMatchers = wiring.hooks.PostToolUse.map((g) => g.matcher).sort();
-    expect(postMatchers).toEqual(["Bash", "apply_patch", "update_plan"]);
+    expect(postMatchers).toEqual(["Bash", "apply_patch", "request_user_input", "update_plan"]);
+    expect(
+      wiring.hooks.PostToolUse.find((group) => group.matcher === "request_user_input")
+        ?.hooks[0]?.command,
+    ).toBe("bun .codex/hooks/aidlc-codex-adapter.ts record-human-turn");
+    expect(
+      wiring.hooks.PreToolUse.find((group) => group.matcher === "Bash")
+        ?.hooks[0]?.command,
+    ).toBe("bun .codex/hooks/aidlc-codex-adapter.ts bind-bash-session");
     // Every registration routes through the single authored adapter.
     for (const groups of Object.values(wiring.hooks)) {
       for (const g of groups) {

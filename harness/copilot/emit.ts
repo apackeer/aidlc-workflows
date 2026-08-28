@@ -32,6 +32,7 @@ import type { EmitContext } from "../../scripts/manifest-types.ts";
 import {
   writeMarkdownAgentSurface,
 } from "../../core/tools/aidlc-model-policy.ts";
+import { injectDelegatedKnowledgePreflight } from "../../scripts/agent-knowledge.ts";
 
 // ---------------------------------------------------------------------------
 // Hook wiring. PascalCase events; register ONLY events with a real core-hook
@@ -161,8 +162,22 @@ export default function emit(ctx: EmitContext): void {
   for (const f of readdirSync(agentsDir).filter((x) => x.endsWith(".md")).sort()) {
     emissions.push({
       path: join(SHELL, "agents", f),
-      content: () =>
-        substituteToken(emitAgentMd(readFileSync(join(agentsDir, f), "utf-8"), join(agentsDir, f))),
+      content: () => {
+        const agentName = f.replace(/\.md$/, "");
+        return substituteToken(
+          emitAgentMd(
+            injectDelegatedKnowledgePreflight(
+              readFileSync(join(agentsDir, f), "utf-8"),
+              agentName,
+              harnessDir,
+            ),
+            join(agentsDir, f),
+          ),
+        ).replaceAll(
+          "aidlc/spaces/<active-space>/memory/",
+          "aidlc/spaces/default/memory/",
+        );
+      },
     });
   }
 

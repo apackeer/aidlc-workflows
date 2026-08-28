@@ -9,8 +9,16 @@
 
 import { afterEach, describe, expect, test } from "bun:test";
 import { spawnSync } from "node:child_process";
-import { mkdirSync, readFileSync, symlinkSync, writeFileSync } from "node:fs";
-import { join } from "node:path";
+import {
+  appendFileSync,
+  copyFileSync,
+  existsSync,
+  mkdirSync,
+  readFileSync,
+  symlinkSync,
+  writeFileSync,
+} from "node:fs";
+import { dirname, join } from "node:path";
 import {
   artifactFilename,
   readAllAuditShards,
@@ -190,6 +198,27 @@ function review(
   verdict: "READY" | "NOT-READY" = "READY",
   iteration = 1,
 ): void {
+  const artifact = join(
+    seededRecordDir(proj),
+    "construction",
+    unit,
+    "functional-design",
+    "functional-spec.md",
+  );
+  if (!existsSync(artifact)) {
+    mkdirSync(dirname(artifact), { recursive: true });
+    writeFileSync(artifact, "# functional-spec\n", "utf-8");
+  } else {
+    const current = readFileSync(artifact, "utf-8");
+    const reviewStart = current.search(/^## Review[ \t]*$/m);
+    if (reviewStart !== -1) {
+      writeFileSync(
+        artifact,
+        `${current.slice(0, reviewStart).replace(/\s+$/, "")}\n`,
+        "utf-8",
+      );
+    }
+  }
   const args = [
     LOG,
     "review",
@@ -202,15 +231,32 @@ function review(
     "--iteration",
     String(iteration),
   ];
-  for (const suffix of [[], ["--verdict", verdict]]) {
-    const result = spawnSync(
-      BUN,
-      [...args, ...suffix, "--project-dir", proj],
-      { encoding: "utf-8" },
+  const env = {
+    ...process.env,
+    AIDLC_SKIP_SUMMARY_CONFIRMATION_GUARD: "1",
+  };
+  const requested = spawnSync(
+    BUN,
+    [...args, "--project-dir", proj],
+    { encoding: "utf-8", env },
+  );
+  if ((requested.status ?? -1) !== 0) {
+    throw new Error(`review request failed: ${requested.stdout}${requested.stderr}`);
+  }
+  appendFileSync(
+    artifact,
+    `\n## Review\n\n**Verdict:** ${verdict}\n**Reviewer:** aidlc-architecture-reviewer-agent\n**Iteration:** ${iteration}\n\n### Findings\n\nFixture review.\n`,
+    "utf-8",
+  );
+  const completed = spawnSync(
+    BUN,
+    [...args, "--verdict", verdict, "--project-dir", proj],
+    { encoding: "utf-8", env },
+  );
+  if ((completed.status ?? -1) !== 0) {
+    throw new Error(
+      `review completion failed: ${completed.stdout}${completed.stderr}`,
     );
-    if ((result.status ?? -1) !== 0) {
-      throw new Error(`review failed: ${result.stdout}${result.stderr}`);
-    }
   }
 }
 
@@ -423,7 +469,6 @@ describe("t278 engine-emitted wave contract", () => {
       "scalability-requirements",
       "reliability-requirements",
       "observability-requirements",
-      "functional-spec",
     ]) {
       expect(consumePaths.some((path) => path.endsWith(`/${pruned}.md`))).toBe(
         false,
@@ -434,6 +479,9 @@ describe("t278 engine-emitted wave contract", () => {
     );
     expect(consumePaths).toContain(
       `${RP}/construction/contract/nfr-requirements/tech-stack-decisions.md`,
+    );
+    expect(consumePaths).toContain(
+      `${RP}/construction/contract/functional-design/functional-spec.md`,
     );
     expect(entry.required_produces).toEqual([
       `${RP}/construction/contract/nfr-design/security-design.md`,
@@ -666,11 +714,11 @@ describe("t278 engine-emitted wave contract", () => {
     );
     expect(rejected.status).toBe(0);
     expect(rejected.out).toContain('"kind":"error"');
-    expect(rejected.out).toContain("Refusing to reject");
+    expect(rejected.out).toContain("Cannot request changes");
     expect(rejected.out).toContain(
-      "stale-receipt recovery review was already spent",
+      "recovery review has already been used",
     );
-    expect(rejected.out).toContain("only after a real human has acted");
+    expect(rejected.out).toContain("only a new human choice");
     expect(next(proj).directive.wave?.entries[0]).toMatchObject({
       unit: "alpha",
       review_state: "escalation-required",
@@ -680,8 +728,9 @@ describe("t278 engine-emitted wave contract", () => {
     const stillSpent = reviewRequestResult(proj, "alpha", 1);
     expect(stillSpent.status).not.toBe(0);
     expect(stillSpent.out).toContain(
-      "stale-receipt recovery review pass was already spent",
+      "one recovery review was already used",
     );
+    expect(stillSpent.out).toContain("Request Changes decision");
     expect(auditEventCount(proj, "GATE_REJECTED")).toBe(0);
 
     appendAuditEntry("HUMAN_TURN", {}, proj);
@@ -713,6 +762,18 @@ describe("t278 engine-emitted wave contract", () => {
 
   test("large independent batches emit deterministic same-batch prefixes below the transport cap", () => {
     const proj = project();
+    const installedTemplate = join(
+      proj,
+      ".claude",
+      "knowledge",
+      "aidlc-shared",
+      "memory-template.md",
+    );
+    mkdirSync(dirname(installedTemplate), { recursive: true });
+    copyFileSync(
+      join(AIDLC_SRC, "knowledge", "aidlc-shared", "memory-template.md"),
+      installedTemplate,
+    );
     const units = Array.from({ length: 100 }, (_, index) => ({
       name: `unit-${index.toString().padStart(3, "0")}`,
       kind: "service",
@@ -727,6 +788,17 @@ describe("t278 engine-emitted wave contract", () => {
     expect(Buffer.byteLength(result.stdout.trim(), "utf-8")).toBeLessThanOrEqual(
       28 * 1024,
     );
+    const emitted = new Set(entries.map((entry) => entry.unit));
+    for (const unit of units) {
+      const memory = join(
+        seededRecordDir(proj),
+        "construction",
+        unit.name,
+        "functional-design",
+        "memory.md",
+      );
+      expect(existsSync(memory)).toBe(emitted.has(unit.name));
+    }
   }, 30000);
 
   test("an unmatched paired review request is re-emitted as retry-required", () => {

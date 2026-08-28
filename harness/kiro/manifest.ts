@@ -97,6 +97,8 @@ const manifest: HarnessManifest = {
     { src: "agents/aidlc-pipeline-deploy-agent.json", dst: "agents/aidlc-pipeline-deploy-agent.json" },
     { src: "agents/aidlc-operations-agent.json", dst: "agents/aidlc-operations-agent.json" },
     { src: "hooks/aidlc-kiro-adapter.ts", dst: "hooks/aidlc-kiro-adapter.ts" },
+    { src: "hooks/aidlc-record-human-turn.kiro.hook", dst: "hooks/aidlc-record-human-turn.kiro.hook" },
+    { src: "hooks/aidlc-plan-approval-guard.kiro.hook", dst: "hooks/aidlc-plan-approval-guard.kiro.hook" },
     { src: "settings/cli.json", dst: "settings/cli.json" },
     { src: "settings/mcp.json", dst: "settings/mcp.json" },
     // Project-root .gitignore (beside .kiro/, not inside it) — re-rooted under
@@ -122,9 +124,9 @@ const manifest: HarnessManifest = {
   // Kiro ships no per-shell emissions — all its surfaces are authored files.
   emit: null,
 
-  // Kiro has no host plugin store — AIDLC plugins arrive by folder-drop + a
-  // .kiro.hook that composes on first interaction (kind "kiro"). Manifest dir is
-  // shared with Kiro IDE (both are .kiro trees).
+  // Kiro has no host plugin store — AIDLC plugins arrive by folder-drop and use
+  // the explicit composer. Agent-v1 reads hooks from agent configs; v3/KAS also
+  // consumes the standalone .kiro.hook files projected above.
   plugin: { manifestDir: ".kiro-plugin", kind: "kiro" },
 };
 

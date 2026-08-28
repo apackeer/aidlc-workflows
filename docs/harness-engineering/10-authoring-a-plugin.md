@@ -18,7 +18,8 @@ else) are **mechanically identical** — same structure, same seams, same
 composer, same guarantees. The only difference is provenance: whose repository
 the plugin lives in and who reviewed it.
 
-This chapter walks the `test-pro` plugin end to end. Copy its shape for your own.
+Start a new repository with `aidlc-plugin-create.ts`; this chapter then walks
+the richer `test-pro` reference plugin end to end.
 
 ## When to write a plugin vs. a plain stage/rule
 
@@ -47,6 +48,7 @@ test-pro/
   sensors/aidlc-requirement-coverage.md
   tools/aidlc-sensor-coverage-threshold.ts            # the sensor scripts
   tools/aidlc-sensor-requirement-coverage.ts
+  tools/test-pro-doctor.ts                             # optional /aidlc --doctor checks
   scopes/test-pro-validation.md                       # NEW plugin scope
   agents/test-pro-metrics-agent.md                    # NEW support persona
   knowledge/test-pro-metrics-agent/methodology.md     # plugin methodology knowledge
@@ -73,19 +75,32 @@ block:
       "scopes": "scopes/",            // NEW scope identities
       "knowledge": "knowledge/",      // methodology knowledge for agents
       "sensors": "sensors/",          // sensor manifests
-      "tools": "tools/"               // sensor scripts (so a sensor can run)
+      "tools": "tools/"               // runnable sensor + doctor scripts
     }
   }
 }
 ```
 
-`contributes` keys map to core subtrees (`stages`, `agents`, `scopes`, `memory`,
-`sensors`, `knowledge`, `tools`) — those are merged alongside core at compose.
+`contributes` declares the conventional plugin subtrees. Configurable routing is
+not implemented yet, so each present value must use the exact canonical path
+shown above; VALIDATE, BUILD, and TEST reject alternatives such as
+`"stages": "custom-stages/"` instead of silently omitting that content.
 `tools` lands CLI scripts in the harness `tools/` dir so a plugin can ship a
-**runnable sensor** (its manifest in `sensors/` + its script in `tools/`).
-`memory` merges into the default-space method seed, **not** a `rules/` dir (that
-directory is no longer read — see §4). `overlays` is special: it is **not**
-copied; it holds the per-stage contributions consumed by the merge (§3).
+**runnable sensor** (its manifest in `sensors/` + its script in `tools/`) and an
+optional doctor check.
+Keep tests and fixtures in the plugin's top-level `tests/` directory, never
+inside `tools/`. Compose drops files under `tools/tests/`, `tools/__tests__/`,
+or `tools/fixtures/`, plus co-located `*.test.ts` and `*.spec.ts` files, and
+records an advisory drop surfaced by `/aidlc --doctor`. It also scans the
+installed tools tree for payloads left by older compose versions; because those
+legacy files carry no provenance, that migration advisory names the installed
+path without attributing it to the plugin currently composing.
+`overlays` is special: its canonical directory is
+`contributions/`, whose files are consumed by the merge rather than copied as a
+primitive subtree.
+
+`memory` projection remains deferred. Do not declare `contributes.memory` yet:
+the authoring tools reject it until the default-space method-seed merge ships.
 
 Ship only the keys your plugin uses. `test-pro` ships a support agent, a plugin
 scope, and per-agent methodology knowledge; it still reuses
@@ -216,7 +231,10 @@ set-union and their fragments interleave by this same ordering — genuinely mer
 Each spliced fragment is wrapped in a sentinel comment carrying a content hash
 (`<!-- plugin:<plugin>:<anchor>:<order>:<hash> --> … <!-- /plugin:… -->`), which
 is how re-composing stays idempotent and an upgraded fragment replaces its prior
-block. Two authoring rules follow from that:
+block. Compose also records each successfully applied fragment's anchor, order,
+and hash in the plugin contribution sidecar. That provenance exists even for a
+prose-only plugin, allowing doctor to detect a missing marker or changed fragment
+body after an engine reinstall. Two authoring rules follow from that:
 
 - **Don't write a sentinel-lookalike line in fragment prose.** A line matching
   `<!-- /plugin:… -->` inside your prose will be mistaken for a block terminator
@@ -226,6 +244,24 @@ block. Two authoring rules follow from that:
   hashless marker; an upgrade won't recognize it and will splice a second copy.
   Only PR-branch installs are affected — recompose from a clean base, or delete
   the old block by hand, once.
+
+### Engine upgrade lifecycle
+
+An engine reinstall copies the stock `dist/<harness>/` graph and core stage
+sources over the effective install. Plugin-namespaced files and contribution
+sidecars can survive that overlay while their graph entries and structural or
+prose contribution merges disappear. Authors should make re-composition part of
+their upgrade instructions: run `/aidlc plugin sync` after every engine
+reinstall or upgrade (or start a new session on a host with the plugin compose
+hook). Composition is idempotent, so this restores the same effective surface
+without duplicating unchanged contributions. `/aidlc --doctor` reports the
+broken state as **Composed plugin surface**. The check fails closed when an
+enabled plugin's sidecar is unreadable or malformed, a recorded target stage no
+longer exists, or a recorded structural or prose contribution is absent or
+changed. Consume records preserve and verify `artifact`, `required`, and optional
+`conditional_on`; artifact-only records from older sidecars remain compatible. An
+invalid sidecar cannot be reconstructed safely from an already-composed stage:
+refresh the stock engine, remove that sidecar, then run `plugin sync`.
 
 ## 4. Packaging the other primitives
 
@@ -253,10 +289,11 @@ projection remains deferred (doc 18 §9 Status).
   names the file and the required shape, rather than letting it land dead. Bind
   the sensor to your own stages via `sensors:`, or to a core stage via a
   contribution's `adds.sensors`. See [Sensors](06-sensors.md).
-- **Method/rules.** *(⏳ deferred.)* Ship a `memory/` subtree — `memory/phases/<phase>.md` (or
-  `memory/{org,team,project}.md`) — via `contributes.memory`. It **merges into
-  the default-space method seed** (`aidlc/spaces/default/memory/`) in the design,
-  but the packager/compose hook does not project or merge `memory/` yet. Do
+- **Method/rules.** *(⏳ deferred.)* A future `contributes.memory` surface will
+  merge `memory/phases/<phase>.md` and `memory/{org,team,project}.md` into the
+  default-space method seed (`aidlc/spaces/default/memory/`). The packager and
+  compose hook do not project that subtree yet, and the authoring tools reject
+  the declaration so a build cannot report success while omitting it. Do
   **not** ship a `rules/` dir — that path is no longer read (the rule layer moved
   into per-space memory). See [Rules and the Loop](05-rules-and-the-loop.md).
 - **Knowledge.** Ship per-agent **methodology** knowledge under
@@ -276,13 +313,58 @@ projection remains deferred (doc 18 §9 Status).
   frontmatter list; a contribution's `adds.scopes` (§3) adds YOUR scope to an
   existing core stage. See [Scopes](04-scopes.md).
 
+### Ship a doctor check
+
+Add `tools/<plugin>-doctor.ts` when your plugin has install prerequisites or
+composed files that `/aidlc --doctor` should verify. The script is optional and
+runs only while the plugin is enabled. It receives `AIDLC_PROJECT_DIR`,
+`AIDLC_HARNESS_DIR`, and `AIDLC_PLUGIN_NAME`, and must print the JSON contract
+without other stdout:
+
+Doctor discovery derives installed plugin identities from owned stage and scope
+metadata. A plugin must therefore own at least one stage or scope for its doctor
+script to be discoverable; a tools-, sensors-, or knowledge-only plugin is not
+enough on its own.
+
+```typescript
+import { existsSync } from "node:fs";
+import { join } from "node:path";
+
+const root = join(
+  process.env.AIDLC_PROJECT_DIR ?? process.cwd(),
+  process.env.AIDLC_HARNESS_DIR ?? ".claude",
+);
+
+console.log(JSON.stringify({
+  checks: [{
+    pass: existsSync(join(root, "tools", "my-plugin-helper.ts")),
+    label: "my-plugin helper installed",
+    fix: "Run `bun <harness-dir>/tools/aidlc-utility.ts plugin-sync` or re-run hooks/compose.ts.",
+    severity: "error",
+  }],
+}));
+```
+
+Omit `severity` for the default `error` behavior. Use `advisory` for a visible
+finding that must not fail doctor. Keep the script read-only and dependency-free;
+doctor bounds its runtime/output and turns script failures into diagnostic rows.
+
 ## 5. Distribution + install
 
-The packager emits your plugin as **a real host plugin** (one projection target
-per harness, including `.claude-plugin/plugin.json`, `.codex-plugin/plugin.json`,
-Copilot's `.plugin/plugin.json`, and Kiro's folder projection). You publish the
-output to a git repo with semver tags and a `marketplace.json`, and teams install
-through the host's native commands.
+The shipped builder emits your plugin as **a real host plugin** for one harness
+at a time, including `.claude-plugin/plugin.json`,
+`.codex-plugin/plugin.json`, Copilot's `.plugin/plugin.json`, and Kiro's folder
+projection:
+
+```bash
+bun <tools-dir>/aidlc-plugin-build.ts <plugin-root> <harness> [outDir]
+```
+
+The default output is `<plugin-root>/dist/<harness>/`. Run it once for each
+harness you publish. The repository packager uses the same emitter to build
+first-party `dist/plugins/<name>/<harness>/` trees, so its byte-parity guard also
+guards external builds. Publish the output to a git repo with semver tags and a
+`marketplace.json`; teams then install through the host's native commands.
 
 ### Claude / Codex (host store)
 
@@ -349,9 +431,12 @@ AIDLC_PLUGIN_ROOT="<plugin-root>" AIDLC_PROJECT_DIR="<project>" \
 # open in Kiro IDE or kiro-cli chat → /aidlc
 ```
 
-> **Kiro note.** The emitted `.kiro.hook` still depends on host support for
-> plugin-root env vars. Use `aidlc engine plugin sync` with `AIDLC_PLUGIN_ROOT` when the binary is available, or
-> the explicit `bun compose.ts` invocation above as the fallback.
+> **Kiro note.** Use the `kiro-ide` projection for Kiro IDE >= 1.0; its folder-drop
+> includes a v2 `.kiro/hooks/aidlc-<plugin>-compose.json` SessionStart registration
+> that runs the cross-platform `hooks/aidlc-plugin-compose.ts` Bun launcher from
+> the workspace root. The `kiro` projection for Kiro CLI emits no hook registration,
+> so run one of the explicit composer commands above. Neither projection emits the
+> retired `.kiro.hook` plugin registration.
 
 ### Trust
 
@@ -366,21 +451,142 @@ Trust is **host-native** — you don't build anything:
 > [Plugin Mechanism §9](../reference/18-plugin-mechanism.md) for the full
 > platform-team worked example.
 
-## Testing your plugin
+## Authoring and testing your plugin
 
-Use three tiers, from cheapest to most realistic:
+Start from the shipped scaffold, then use three test tiers from cheapest to
+most realistic.
 
-1. **Content validation** is the always-on baseline. Call
-   `validatePluginContent()` against the authored plugin root. It runs pure,
-   deterministic checks for manifest identity, stage schema and ownership,
-   artifact namespacing, contribution targets, scope and agent filenames, and
-   non-empty stage bodies. It is fast and gives precise authoring findings, but
-   it does not prove that packaging or composition succeeds.
-2. **Compose integration** is the default CI check. Call
-   `composePluginFixture()` to build the real harness projection, copy a shipped
-   install into scratch space, run the emitted compose hook, and inspect the
-   compiled graph and installed surfaces. It is deterministic and exercises the
-   actual packager and composer, but it does not launch a model-backed harness.
+### Creating your plugin
+
+Create a deterministic minimal plugin repository:
+
+```bash
+bun <tools-dir>/aidlc-plugin-create.ts <name> [targetDir]
+bun <tools-dir>/aidlc-plugin-create.ts <name> [targetDir] --json
+```
+
+The name must be lowercase kebab-case, must match the target directory name,
+and cannot be `core`, `aidlc`, or use the reserved `aidlc-` prefix. Without
+`targetDir`, output lands at `./<name>/`. CREATE refuses a non-empty target and
+never overwrites existing files.
+
+The scaffold includes a schema-valid manifest, one namespaced example stage,
+scope, and agent, a root README with the full authoring flow, and a `tests/`
+README. It intentionally omits `hooks/compose.ts`; validation reports the
+documented absence warning and BUILD injects the bundled current hook.
+
+### Validating your plugin
+
+Run the shipped validator against the plugin repository root before building or
+composing:
+
+```bash
+bun <tools-dir>/aidlc-plugin-validate.ts <plugin-root>
+bun <tools-dir>/aidlc-plugin-validate.ts <plugin-root> --json
+```
+
+The tool is offline and standalone: `<plugin-root>` is the directory containing
+`.aidlc-plugin/plugin.json`; no AIDLC project or framework checkout is required.
+Exit `0` means valid, `1` means authoring findings, and `2` means invalid command
+usage. JSON output is `{valid, errors, warnings}` with stable file-scoped
+findings.
+
+Validation checks:
+
+- the manifest exists and has the documented identity, SemVer, and
+  `aidlc.contributes` shape;
+- every stage parses and passes the shipped stage schema, with matching slug,
+  filename, and plugin ownership;
+- scopes use `<plugin>-<name>.md`, match their frontmatter identity, declare a
+  supported depth, and parse declared keywords as a non-empty block or flow
+  list;
+- agents use `<plugin>-<role>-agent.md` and match their frontmatter identity;
+- no two plugin stages produce the same artifact across `produces` and
+  `optional_produces`, even when no stage consumes it;
+- produced artifacts use the plugin-name prefix, stage bodies are non-empty,
+  stage agent references resolve against the bundled core plus plugin roster,
+  and contribution targets resolve to bundled core stage slugs;
+- authored plugin content uses regular files and directories; symlinks under
+  stages, scopes, agents, contributions, sensors, knowledge, tools, or hooks
+  are rejected instead of being silently omitted or followed;
+- `tools/` contains no nested `tests/`, `fixtures/`, or `*.test.ts` payloads
+  that composition would copy into an install;
+- a vendored `hooks/compose.ts`, when present, is byte-identical to the
+  template bundled with the validator. Absence is valid because plugin build
+  injects the current template.
+
+The user-facing `aidlc plugin validate` and `aidlc plugin build` verbs delegate
+to these same shipped tools. `aidlc plugin create` and `aidlc plugin test`
+remain deferred to
+[RFC #723 §2e](https://github.com/awslabs/aidlc-workflows/issues/723); invoke
+their shipped Bun tools directly.
+
+The repository test helper's `validatePluginContent()` delegates these shared
+rules to the same tool and retains checkout-aware fixture integration.
+
+### Building your plugin
+
+Project one validated plugin into one host-native plugin:
+
+```bash
+bun <tools-dir>/aidlc-plugin-build.ts <plugin-root> claude
+bun <tools-dir>/aidlc-plugin-build.ts <plugin-root> codex ./release/codex
+bun <tools-dir>/aidlc-plugin-build.ts <plugin-root> cursor --json
+```
+
+The builder runs validation in-process before it writes anything. Errors refuse
+the build with exit `1`; warnings proceed. Invalid command usage and unknown
+harness names exit `2`. Without `outDir`, output lands at
+`<plugin-root>/dist/<harness>/`. BUILD also rejects a symlink at the output path,
+inside an existing output subtree, or between the trusted build boundary and
+the output. For the default output that boundary is the plugin root, so a linked
+`<plugin-root>/dist` is refused; environmental aliases above the boundary do
+not invalidate an otherwise-owned output.
+
+The authoring flow is:
+
+1. **Create** a deterministic scaffold with `aidlc-plugin-create.ts`.
+2. **Author** the plugin-owned stages, scopes, agents, and other contributions.
+3. **Validate** the authored root offline.
+4. **Build** each harness projection you support.
+5. **Test** composition against a disposable copy of a real install.
+6. **Publish** those generated directories and marketplace metadata from your
+   own repository.
+
+All four tools run from a copied AIDLC tools bundle and require neither an
+AIDLC project nor a framework checkout.
+
+### Testing composition
+
+Answer "does this plugin compose cleanly into my install?" without modifying
+that install:
+
+```bash
+bun <tools-dir>/aidlc-plugin-test.ts <plugin-root> \
+  --install <project-root> [--harness <name>] [--json]
+```
+
+The tool validates and builds first, copies the selected install surfaces into
+a temporary candidate, runs the real emitted `hooks/compose.ts`, recompiles the
+candidate graph, verifies the plugin stages and scopes are present, and runs
+compose a second time to prove idempotency. Any compose drop, graph failure,
+missing plugin node, or second-pass file change exits `1`. The live install is
+hashed before and after and is never a compose target.
+
+Pass `--harness` when the install is ambiguous, including `.kiro` (Kiro CLI vs
+Kiro IDE) and `.aidlc` (Copilot vs OpenCode). `--dist <version>` is reserved
+until RFC #722 milestone 2 defines a released runtime-bundle channel.
+
+1. **Content validation** is the always-on baseline. Run
+   `aidlc-plugin-validate.ts` against the authored plugin root. It is fast and
+   gives precise authoring findings, but it does not prove that packaging or
+   composition succeeds.
+2. **Compose integration** is the default CI check. Run
+   `aidlc-plugin-test.ts` against a real install. Inside this repository,
+   `composePluginFixture()` delegates the hook subprocess/drop reader to the
+   same shipped implementation while retaining its test-only fixture API.
+   This tier is deterministic and exercises the actual builder and composer,
+   but it does not launch a model-backed harness.
 3. **Live harness e2e** is opt-in compatibility evidence. Call
    `invokeHarness()` only behind the gate returned by `liveGateFor()`. The live
    gates are `AIDLC_CLAUDE_SDK_LIVE`, `AIDLC_KIRO_ACP_LIVE`,
@@ -397,7 +603,8 @@ automatically and join the integration tier. Run one plugin's tests with:
 bash tests/run-tests.sh --integration --filter "plugin-<name>"
 ```
 
-This content test is the minimum copyable shape:
+Inside this repository, this content test is the minimum copyable shape. The
+helper delegates the shared rules to the shipped tool:
 
 ```ts
 import { expect, test } from "bun:test";
