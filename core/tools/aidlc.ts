@@ -243,6 +243,9 @@ export const ROUTES: readonly Route[] = [
       "status",
     ],
     tool: TOOLS.unit,
+    ...PUBLIC_ENGINE,
+    namespace: "public",
+    mutationScope: "project",
     all: [
       "unit adopt <unit>",
       "unit claim <unit>",

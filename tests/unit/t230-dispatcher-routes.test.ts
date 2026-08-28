@@ -487,7 +487,6 @@ describe("t230 dispatcher route parity", () => {
       tool: "aidlc-utility.ts",
       toolArgs: ["plugin-build", "claude", "out", "--plugin-root", "."],
       fixture: true,
-      fixture: true,
     },
     {
       name: "update maps to its machine lifecycle delegate",

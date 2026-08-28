@@ -191,7 +191,12 @@ function seedBindableWorkspace(sandbox: string): void {
 
 /** Construct the real gate shape the live journey claims to exercise. */
 function seedApprovalGate(sandbox: string): void {
-  const stageDir = join(seededRecordDir(sandbox), "inception", COMMITTED_SLUG);
+  seedGateFor(sandbox, COMMITTED_SLUG);
+}
+
+function seedGateFor(sandbox: string, slug: string): void {
+  const phase = slug === COMMITTED_SLUG ? "inception" : "construction";
+  const stageDir = join(seededRecordDir(sandbox), phase, slug);
   mkdirSync(stageDir, { recursive: true });
   if (slug === COMMITTED_SLUG) {
     writeFileSync(

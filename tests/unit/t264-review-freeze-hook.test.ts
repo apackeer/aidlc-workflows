@@ -373,6 +373,9 @@ describe("t264 (a) judgeFreeze decision table", () => {
 
   test("writeTargets: file tools and mutation-capable Bash contribute paths", () => {
     const hostPath = (value: string): string => resolve(value);
+    const bashTargets = (command: string, cwd?: string): string[] =>
+      writeTargets("Bash", { command }, cwd)
+        .map((path) => path.replaceAll("\\", "/").replace(/^[A-Za-z]:/, ""));
     expect(writeTargets("Write", { file_path: "/a/b.md" })).toEqual(["/a/b.md"]);
     expect(writeTargets("Edit", { file_path: "/a/b.md" })).toEqual(["/a/b.md"]);
     expect(writeTargets("Read", { file_path: "/a/b.md" })).toEqual([]);
