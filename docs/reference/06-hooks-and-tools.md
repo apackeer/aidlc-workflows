@@ -8,7 +8,7 @@ This chapter documents the hook system architecture, all seventeen hook scripts,
 
 ## Hook System Architecture
 
-This implementation uses seventeen TypeScript hook sources in `.claude/hooks/`. The copy channel invokes them through `bun`; the native channel routes them through `aidlc engine hook`, `aidlc engine statusline`, or an `aidlc engine adapter` target. All seventeen are **project-wide** — registered in `settings.json` (the statusline via the top-level `statusLine` key, the other sixteen via the `hooks` block), they fire regardless of which skill is active. They were previously split (six declared in `aidlc/SKILL.md` frontmatter as skill-scoped, the rest project-wide); v0.6.0 moved the skill-scoped six into `settings.json` so every entry point — the orchestrator, each packaged scope/stage runner, and any hand-written customer runner — inherits the deterministic spine with no per-runner `hooks:` block.
+This implementation uses seventeen TypeScript hook sources in `.claude/hooks/`. A source-generated `dist/` projection invokes them through `bun`; native installs and versioned release runtimes route them through `aidlc engine hook`, `aidlc engine statusline`, or an `aidlc engine adapter` target. All seventeen are **project-wide** — registered in `settings.json` (the statusline via the top-level `statusLine` key, the other sixteen via the `hooks` block), they fire regardless of which skill is active. They were previously split (six declared in `aidlc/SKILL.md` frontmatter as skill-scoped, the rest project-wide); v0.6.0 moved the skill-scoped six into `settings.json` so every entry point — the orchestrator, each packaged scope/stage runner, and any hand-written customer runner — inherits the deterministic spine with no per-runner `hooks:` block.
 
 Eleven of the seventeen are **non-blocking**. Six are **flow-altering**: the `Stop` hook keeps the forwarding loop running, the deliver-stage-rules hook attaches exact active-stage rules to subagent briefs where the harness supports input rewriting, the plan-approval guard refuses premature code-generation dispatches, the reviewer-scope hook refuses sibling-unit reviewer access, the review-freeze hook refuses a produces[] write that would void a fresh terminal review receipt before the gate, and the state-transition guard refuses direct lifecycle calls that bypass `aidlc-orchestrate.ts report`.
 
@@ -580,8 +580,9 @@ The file `core/tools/aidlc-utility.ts` handles utility commands deterministicall
 aidlc engine <noun> <verb>
 ```
 
-In committed `dist/` copies, `{{INVOKE}}` expands that call to
-`bun <harness-dir>/tools/aidlc.ts`; in `dist-release/` and installed native
+In source-generated `dist/` projections, `{{INVOKE}}` expands that call to
+`bun <harness-dir>/tools/aidlc.ts`; in generated `dist-release/`, versioned
+`runtime/<harness>/`, and installed native
 projects it expands to `aidlc`. Do not author a harness-specific direct script
 path for a framework command.
 
@@ -782,7 +783,7 @@ The transcript reader is **Claude-Code-format-specific**, and only the Claude ha
 
 ## Prerequisites
 
-1. **bun (copy channel only)** -- Required for all 17 hook sources and every TypeScript CLI tool in a copied `dist/<harness>/` tree (`aidlc-utility.ts`, `aidlc-state.ts`, `aidlc-jump.ts`, `aidlc-orchestrate.ts`, `aidlc-audit.ts`, `aidlc-validate.ts`, `aidlc-graph.ts`, `aidlc-sensor.ts`, `aidlc-learnings.ts`, `aidlc-runtime.ts`). Native release installs route the same hooks and tools through the self-contained `aidlc` binary. For copy installs, install bun via `curl -fsSL https://bun.sh/install | bash`; on Windows use `npm install -g bun` or `powershell -c "irm bun.sh/install.ps1 | iex"`. It must be on PATH for non-interactive shells.
+1. **bun (source-generated projection only)** -- Required for all 17 hook sources and every TypeScript CLI tool in a locally generated `dist/<harness>/` tree (`aidlc-utility.ts`, `aidlc-state.ts`, `aidlc-jump.ts`, `aidlc-orchestrate.ts`, `aidlc-audit.ts`, `aidlc-validate.ts`, `aidlc-graph.ts`, `aidlc-sensor.ts`, `aidlc-learnings.ts`, `aidlc-runtime.ts`). Native release installs and versioned release runtimes route the same hooks and tools through the self-contained `aidlc` binary. For source projections, install bun via `curl -fsSL https://bun.sh/install | bash`; on Windows use `npm install -g bun` or `powershell -c "irm bun.sh/install.ps1 | iex"`. It must be on PATH for non-interactive shells.
 2. **$CLAUDE_PROJECT_DIR** -- Set by Claude Code to the project root. All hooks use it to locate the `aidlc/` workspace (and the active intent's record dir within it).
 
 No other prerequisites: copy installs run every hook and tool through bun, while native installs use the compiled dispatcher. Neither channel requires `jq`, `sed`, `awk`, Git Bash, or WSL for hook execution.

@@ -335,7 +335,9 @@ selection.
 ### Kiro (no store — folder-drop, then run the composer explicitly)
 
 ```bash
-# git pull your plugin repo, copy the Kiro projection into the project:
+# From the AIDLC source root, materialize the ignored local plugin projections:
+bun scripts/package.ts
+# Then copy the Kiro projection into the project:
 cp -r dist/plugins/<name>/kiro/. <project>/
 # preferred when aidlc is on PATH:
 AIDLC_PLUGIN_ROOT="<plugin-root>" AIDLC_PROJECT_DIR="<project>" \

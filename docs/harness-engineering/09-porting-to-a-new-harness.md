@@ -3,8 +3,8 @@
 AI-DLC ships from **one core, many harnesses** — today Claude Code, Kiro CLI, Kiro IDE,
 Codex CLI, Cursor, opencode, and GitHub Copilot, and the set is open. The hand-authored source is a
 harness-neutral `core/` plus a thin `harness/<name>/` surface per CLI; the
-packager (`scripts/package.ts`) regenerates each committed Bun copy tree under
-`dist/<harness>/` and its native counterpart under
+packager (`scripts/package.ts`) materializes each ignored local Bun copy tree
+under `dist/<harness>/` and its native counterpart under
 `dist-release/<harness>/`. Adding another harness is **one directory and one
 manifest row** — the engine, methodology, projection ownership, and
 harness-dir/rules resolution take no `core/` edits at all; the lone optional
@@ -48,9 +48,10 @@ The transform applies to Markdown and structured command surfaces
 general source rewrite. The runtime `harnessDir()` seam in
 `core/tools/aidlc-lib.ts` still derives the directory from the shipped layout
 (open-set: the tool's own path, not a hardcoded list), so the same authored tool
-sources run in every tree. The acceptance gate is **byte-parity**: regenerating
-a harness must reproduce both committed channels exactly
-(`package.ts --check`).
+sources run in every tree. The acceptance gate is **generator determinism**:
+`package.ts --check` builds both channels and every plugin projection twice in
+independent temporary roots, then byte-compares the complete outputs. It does
+not read local `dist/` or `dist-release/`.
 
 The packager **discovers** harnesses by scanning `harness/` for a `manifest.ts`,
 so a new dir is built by the default `bun scripts/package.ts` and `--check` with
@@ -176,9 +177,9 @@ agent-TOML transpositions, and the `.agents/skills/` tree (composed from
 `AIDLC_HARNESS_DIR`, never reimplemented). Harnesses whose surfaces are all
 authored files (Claude, Kiro) set `emit: null`.
 
-Under `--check`, the packager supplies a temporary `distRoot`, runs the same
-emitter once for each channel, then compares each complete generated root with
-its committed distribution. Emit-owned files outside `<harnessDir>` (for
+Under `--check`, the packager supplies two independent temporary `distRoot`
+sets, runs the same emitter once per channel in each build, then compares the
+two complete generated roots. Emit-owned files outside `<harnessDir>` (for
 example `.agents/skills/` and the root `AGENTS.md`) therefore participate in the
 same missing, differing, and orphan checks as declarative outputs. Always pass
 emitted command text through `ctx.substituteToken`; otherwise an emitter can
@@ -198,8 +199,9 @@ and native-projection tests guard the boundary.
 
 ## Step 5 — tests + the gate
 
-- A packaging-parity test (`t145`) runs `package.ts --check`; it covers both
-  channels for every discovered harness plus every plugin projection.
+- A package-determinism test (`t145`) runs `package.ts --check`; it covers both
+  channels for every discovered harness plus every plugin projection without
+  requiring generated trees on disk.
 - `t243-install-mechanism` asserts copy projections keep Bun invocations,
   release projections contain no AIDLC Bun invocation, metadata is safe and
   exhaustive, and native-only integrations appear only in `dist-release/`.
@@ -211,8 +213,8 @@ and native-projection tests guard the boundary.
   env + the binary present + authenticated) so they skip cleanly in the
   deterministic tier and run green locally before a port merges.
 
-Run `bun scripts/package.ts <name>` to regenerate both channels,
-`--check` to drift-guard, and
+Run `bun scripts/package.ts <name>` to materialize both local channels,
+`--check` to prove deterministic generation, and
 the deterministic suite (`bash tests/run-tests.sh --smoke --unit --integration
 -P 8`) plus the live journey to gate.
 

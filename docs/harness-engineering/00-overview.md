@@ -113,11 +113,11 @@ by `/aidlc --doctor` as an advisory so authors can rename the file or fix `name`
 Everything a harness engineer authors lives in **`core/`** — the hand-authored,
 harness-neutral source of truth (stages under `core/aidlc-common/stages/`,
 agents under `core/agents/`, scopes, rules, sensors, knowledge, tools, hooks).
-The per-harness `dist/<harness>/` trees you actually run (`dist/claude/.claude/`,
+The per-harness `dist/<harness>/` trees used for source development (`dist/claude/.claude/`,
 `dist/kiro/.kiro/`, `dist/kiro-ide/.kiro/`, `dist/codex/`, `dist/cursor/`,
 `dist/opencode/`, and `dist/copilot/`) are **generated**
-from `core/` plus a thin `harness/<name>/` surface, and they are
-**drift-guarded** — a hand-edit there is rejected by CI. The loop is always:
+from `core/` plus a thin `harness/<name>/` surface. They are ignored local
+outputs, never committed or hand-edited. The loop is always:
 
 ```bash
 # 1. edit the source in core/ (never dist/)
@@ -126,11 +126,13 @@ $EDITOR core/aidlc-common/stages/inception/my-stage.md
 # 2. regenerate both channels for every harness from core/ + harness/
 bun scripts/package.ts
 
-# 3. confirm no drift (the CI guard; run before committing)
+# 3. prove deterministic generation (the CI guard)
 bun scripts/package.ts --check
 ```
 
-Commit the `core/` edit and both regenerated roots together. When a recipe in
+Commit the authored `core/` or `harness/` edit, not the generated roots.
+`--check` builds all copy, native, and plugin projections twice in independent
+temporary roots and byte-compares them. When a recipe in
 the chapters below says to run `aidlc engine graph compile` (or another
 tool), the installed command resolves that tool against the project's active
 harness tree. Generated copy-channel prose uses the Bun dispatcher and native

@@ -1,11 +1,12 @@
 # AI-DLC on opencode
 
-`dist/opencode/` is one of the framework's harness distributions, for the
+The opencode runtime is one of the framework's harness distributions, for the
 open-source **opencode** harness (opencode.ai). One deterministic core, many
 harnesses: the engine, state machine, audit log, graph, swarm referee, and
 learnings gate are byte-identical across every distribution — only the shell
-differs. The tree is **generated** from `core/` + `harness/opencode/` by
-`bun scripts/package.ts opencode`; never hand-edit it (the drift guard fails CI).
+differs. The source/development tree is **generated** into ignored local
+`dist/opencode/` from `core/` + `harness/opencode/` by
+`bun scripts/package.ts opencode`; never hand-edit it.
 
 ## Layout: two dot-dirs, on purpose
 
@@ -29,8 +30,9 @@ script (top-level dispatch, `process.exit`) crashes the session
   (`tool.execute.before`, `tool.execute.after`, `chat.message`, `session.idle`,
   `experimental.session.compacting`) and project-local skill/agent discovery.
   Check with `opencode --version`.
-- **bun** for the source/development copy channel. Native installs dispatch
-  tools and hooks through the self-contained `aidlc` executable.
+- **bun** only when generating or running the source/development `dist/`
+  projection. Native installs and versioned release runtimes dispatch through
+  the self-contained `aidlc` executable.
 - **A model provider** — the shipped project `opencode.json` pins no session
   model; your global opencode config supplies it. Tiered personas pin
   `amazon-bedrock/global.anthropic.claude-sonnet-4-6` — override per agent in
@@ -71,26 +73,20 @@ config discovers the skill and method files and allows direct `aidlc engine *`
 commands; other shell commands still prompt. Start opencode in the project and
 run `/aidlc --doctor`, then `/aidlc` followed by what you want to build.
 
-### Source/development copy alternative
+### Versioned manual-copy alternative
 
-The copies below come from a clone of the
-[aidlc-workflows](https://github.com/awslabs/aidlc-workflows) repository on the
-`v2` branch:
-
-```bash
-git clone https://github.com/awslabs/aidlc-workflows.git
-cd aidlc-workflows
-git checkout v2
-```
+Download and extract a specific release's `aidlc-runtime.tar.gz` as described in
+[Install and Lifecycle: Copy Channel](../18-install-and-lifecycle.md#copy-channel),
+then set `RUNTIME_ROOT` to the extracted `runtime/` directory.
 
 1. Copy the distribution into your project:
 
    ```bash
-   cp -r dist/opencode/.aidlc/    your-project/.aidlc/
-   cp -r dist/opencode/.opencode/ your-project/.opencode/
-   cp -r dist/opencode/aidlc/     your-project/aidlc/      # the workspace shell — a sibling of .aidlc/, not inside it
-   cp dist/opencode/opencode.json your-project/opencode.json  # or merge into yours
-   cp dist/opencode/AGENTS.md     your-project/AGENTS.md      # or merge into yours
+   cp -r "$RUNTIME_ROOT/opencode/.aidlc/"    your-project/.aidlc/
+   cp -r "$RUNTIME_ROOT/opencode/.opencode/" your-project/.opencode/
+   cp -r "$RUNTIME_ROOT/opencode/aidlc/"     your-project/aidlc/      # the workspace shell — a sibling of .aidlc/, not inside it
+   cp "$RUNTIME_ROOT/opencode/opencode.json" your-project/opencode.json  # or merge into yours
+   cp "$RUNTIME_ROOT/opencode/AGENTS.md"     your-project/AGENTS.md      # or merge into yours
    ```
 
    `opencode.json` carries three load-bearing blocks: `skills.paths` (skill
@@ -110,9 +106,10 @@ git checkout v2
 3. Start opencode in the project and run `/aidlc --doctor`, then `/aidlc`
    followed by what you want to build.
 
-This source/development channel requires Git and Bun. The copied tree already
-contains the workspace shell; its projected config command may still record
-guided choices without a native install.
+The versioned runtime uses the native `aidlc` command. Framework developers who
+need the Bun-shaped projection can clone the repository, run
+`bun install --frozen-lockfile` and `bun scripts/package.ts`, then use the
+ignored local `dist/opencode/` output.
 
 ## Refresh and version skew
 

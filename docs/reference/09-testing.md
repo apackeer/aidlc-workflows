@@ -32,8 +32,8 @@ actually select them.
 
 Distribution coverage is split by contract:
 
-- `t145-packaging-parity.test.ts` proves that both committed projection
-  channels and the plugin projections match a clean packager run.
+- `t145-packaging-parity.test.ts` proves that copy, native, and plugin
+  projections are deterministic across two independent clean packager runs.
 - `t238-build-binaries.test.ts` compiles and probes the standalone binary
   closure, including native routes, hooks/adapters, project mutation, and the
   final installed layout with no `bun` on `PATH`.
@@ -47,11 +47,20 @@ Distribution coverage is split by contract:
   discovery, installer harness selection, Windows lifecycle surfaces,
   completions, and release-workflow candidate continuity.
 
+The test runner regenerates all projections under a process lock before test
+discovery, so a fresh clone has no dependency on pre-existing `dist/` bytes.
+CI also runs an explicit package step before each job that consumes generated
+trees. Binary and release packagers perform their own regeneration and
+determinism checks before reading `dist-release/`.
+
 Release CI adds native smoke on Linux, macOS, and Windows, builds the seven
 target artifacts on their native runner architectures, executes musl probes,
-then consumes the same staged release candidate through Unix and Windows
-lifecycle journeys. Publishing re-verifies its checksums and attests the files;
-it does not rebuild the candidate.
+then stages one checksum-verified candidate. Unix and Windows lifecycle
+journeys consume those bytes without signing permissions. After the protected
+gate, the workflow attests them, creates a draft, verifies the draft's actual
+assets through online and offline provenance paths, and only then promotes it.
+Publishing downloads the same candidate, re-verifies its checksums, and does
+not rebuild or repackage it.
 
 `tests/harness/release-fixture.ts` builds deterministic release directories
 from the generated projection manifests and can serve them locally with

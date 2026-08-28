@@ -8,8 +8,9 @@ script is verified before execution.
 
 This chapter describes the native install lifecycle available in this release.
 The planned `aidlc setup` experience, npm package, and package-manager formulas
-are not available yet. Existing copy installs remain supported and continue to
-invoke the TypeScript tools with Bun.
+are not available yet. Manual-copy users take the versioned runtime from
+`aidlc-runtime.tar.gz`; framework developers may separately generate the
+Bun-invoking `dist/` projection from source.
 
 ## Install
 
@@ -108,10 +109,17 @@ the same binary plus all harness runtimes.
 | `--help` | Not exposed | Print Unix installer usage |
 
 `AIDLC_RELEASE_BASE_URL` and `AIDLC_CA_BUNDLE` provide installer defaults;
-explicit options win. `AIDLC_INSTALL_ROOT` and `AIDLC_BIN_DIR` override the
-machine and command locations. Those paths must be absolute on Unix. The
-PowerShell installer also honors `AIDLC_OFFLINE=1`; the Unix installer
-requires the explicit `--offline` or `--from` spelling.
+explicit options win. `AIDLC_RELEASE_REPOSITORY` selects the GitHub repository
+trusted by provenance verification and defaults to `awslabs/aidlc-workflows`.
+`AIDLC_RELEASE_WORKFLOW` selects the trusted signer workflow and defaults to
+`<AIDLC_RELEASE_REPOSITORY>/.github/workflows/release.yml`. Set these explicitly
+for a fork or mirror, together with its release base URL; changing the download
+URL alone does not change the provenance trust root.
+
+`AIDLC_INSTALL_ROOT` and `AIDLC_BIN_DIR` override the machine and command
+locations. Those paths must be absolute on Unix. The PowerShell installer also
+honors `AIDLC_OFFLINE=1`; the Unix installer requires the explicit `--offline`
+or `--from` spelling.
 
 ### Release Authentication
 
@@ -130,13 +138,15 @@ Metadata is limited to 1 MiB and individual release assets to 1 GiB. Asset
 names cannot contain paths. Archive extraction rejects links, special files,
 path traversal, absolute paths, duplicate entries, and oversized expansion.
 
-The release workflow re-verifies `checksums.txt` before publishing and
-publishes a GitHub build-provenance attestation for the release artifacts.
-Its exported bundle ships as `aidlc-release.intoto.jsonl` so a mirror or
-offline consumer can verify provenance without fetching the bundle from
-GitHub. The bundle is intentionally outside `version.json` and
-`checksums.txt`: those files cover the release artifacts, while the bundle is
-its own Sigstore trust channel. TLS, SHA-256, and that provenance are the
+The release workflow assembles the candidate once. Staging and Unix/Windows
+lifecycle jobs verify `checksums.txt` and test those bytes without signing
+permissions. After the protected release gate, `publish` re-verifies the
+candidate, attests it, exports `aidlc-release.intoto.jsonl`, and always creates
+a draft. A read-only job downloads and verifies the draft's actual assets,
+including online and exported-bundle provenance, before a separately gated
+promotion makes it public. The bundle is intentionally outside `version.json` and
+`checksums.txt`: those files cover the installable artifacts, while the bundle
+is its own Sigstore trust channel. TLS, SHA-256, and that provenance are the
 permanent trust model. OS code-signing and notarization are not part of it.
 See [Supply-Chain Security](../reference/19-supply-chain-security.md).
 
@@ -813,16 +823,47 @@ continuation before doing other work.
 
 ## Copy Channel
 
-Copying `dist/<harness>/` remains the source/development channel. Copy the
-complete distribution root so the harness tree, `aidlc/` workspace shell, and
-project-root files stay together. This channel still invokes
-`bun <harness>/tools/aidlc.ts`; Bun must be on the PATH seen by hooks.
+The supported manual-copy payload is the versioned `aidlc-runtime.tar.gz`
+release asset. Download one exact release, extract it, and copy the complete
+`runtime/<harness>/` root so the harness tree, `aidlc/` workspace shell, and
+project-root files stay together:
 
-The separately generated `dist-release/<harness>/` trees are native release
-payloads consumed through the installer and `aidlc config`, not replacements to
-copy by hand. Prefer the public `aidlc` routes whenever the native command is
-installed. Direct `bun .../tools/*.ts` calls remain copy-channel and developer
-debug mechanisms, not a second native lifecycle interface.
+```bash
+tag=vX.Y.Z
+tmp="$(mktemp -d)"
+release_repo="${AIDLC_RELEASE_REPOSITORY:-awslabs/aidlc-workflows}"
+release_workflow="${AIDLC_RELEASE_WORKFLOW:-$release_repo/.github/workflows/release.yml}"
+gh release download "$tag" --repo "$release_repo" --dir "$tmp" \
+  --pattern aidlc-runtime.tar.gz \
+  --pattern checksums.txt \
+  --pattern aidlc-release.intoto.jsonl
+gh attestation verify "$tmp/checksums.txt" \
+  --bundle "$tmp/aidlc-release.intoto.jsonl" \
+  --repo "$release_repo" \
+  --signer-workflow "$release_workflow" \
+  --source-ref "refs/tags/$tag"
+(cd "$tmp" && grep '  aidlc-runtime.tar.gz$' checksums.txt | sha256sum -c -)
+tar -xzf "$tmp/aidlc-runtime.tar.gz" -C "$tmp"
+RUNTIME_ROOT="$tmp/runtime"
+cp -R "$RUNTIME_ROOT/claude/." your-project/
+```
+
+The archive is assembled from freshly regenerated native projections and uses
+the matching `aidlc` command. Prefer `aidlc config`, which applies the same
+runtime transactionally and records ownership for later refreshes.
+
+Framework developers may instead clone the source, install dependencies, and
+materialize ignored local outputs:
+
+```bash
+bun install --frozen-lockfile
+bun scripts/package.ts
+```
+
+That creates the Bun-invoking `dist/<harness>/`, native `dist-release/<harness>/`,
+and plugin projections locally. Neither generated root is committed. Direct
+`bun .../tools/*.ts` calls remain source/development and debugging mechanisms,
+not a second native lifecycle interface.
 
 ## Uninstall
 

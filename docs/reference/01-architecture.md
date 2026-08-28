@@ -255,8 +255,8 @@ The framework is **authored once and generated per harness** — today Claude
 Code, Kiro CLI, Kiro IDE, Codex CLI, Cursor, opencode, and GitHub Copilot, and
 any capable CLI you port it to. The
 hand-authored source is a harness-neutral `core/` plus a thin `harness/<name>/`
-surface per CLI; `bun scripts/package.ts` regenerates the committed,
-drift-guarded `dist/<harness>/` trees:
+surface per CLI; `bun scripts/package.ts` materializes ignored local
+`dist/<harness>/` trees:
 
 ```
 core/                  # hand-authored, harness-neutral (tools, aidlc-common,
@@ -266,11 +266,11 @@ harness/<name>/        # per-CLI surface: manifest.ts + orchestrator skill +
                        #   harness files (+ emit.ts for codex)
 scripts/package.ts     # the build: copy core (token→.claude/.kiro/.codex) +
                        #   harness, compile the graph, generate runners, emit;
-                       #   writes both channels; `--check` guards both
+                       #   writes both channels; `--check` builds twice and compares
 scripts/build-binaries.ts # release-only binary compiler + smoke gate, writing
                        #   per-target executable + runtime/<harness>/ bundles
                        #   under ignored build/binaries/
-dist/<harness>/        # GENERATED + committed: claude/.claude, kiro/.kiro,
+dist/<harness>/        # GENERATED + ignored: claude/.claude, kiro/.kiro,
                        #   kiro-ide/.kiro, codex/{.codex,.agents},
                        #   opencode/{.aidlc,.opencode}, copilot/{.aidlc,.github} — never hand-edited
 ```
@@ -284,15 +284,15 @@ resolution uses the name to distinguish shared engine directories and
 `rulesSubdir()` reads the rename. One set of tool sources runs in every harness. See
 [Porting to a New Harness](../harness-engineering/09-porting-to-a-new-harness.md).
 
-`dist/` and `dist-release/` are separate projections of the same authored
-tree. The copy channel under `dist/` invokes the generated TypeScript
+`dist/` and `dist-release/` are ignored local projections of the same authored
+tree. The source/development channel under `dist/` invokes the generated TypeScript
 dispatcher through Bun. The release channel under `dist-release/` routes
 hooks, generated commands, adapters, and host trust entries through the
 self-contained `aidlc` dispatcher. Native-only root integrations, such as host
-trust seeds, are added only to the release projection. Both roots remain
-committed and are independently rebuilt and byte-compared by
-`package.ts --check`; `dist-release/` is the stable input for release data
-archives and for the binary's native dispatcher source.
+trust seeds, are added only to the release projection. Neither root is
+committed. `package.ts --check` builds the complete projection set twice in
+independent temporary roots and byte-compares those results. CI, tests, binary
+builds, and release packaging regenerate before consuming either local root.
 
 ### Projection identity and ownership
 
@@ -504,29 +504,33 @@ project pins, plugin selection, and plugin sync all build plans for this engine.
 
 ### Release assembly and provenance
 
-`scripts/build-binaries.ts` compiles the dispatcher from
-`dist-release/claude/.claude/tools/aidlc.ts`, stages every native runtime beside
+`scripts/build-binaries.ts` regenerates projections, compiles the dispatcher
+from `dist-release/claude/.claude/tools/aidlc.ts`, stages every native runtime beside
 each target artifact for smoke gates, and writes one
 `build-results-<target>.json`. A host-runnable artifact is `VERIFIED` only after
 the complete native/final-layout gate set; a cross artifact is explicitly
 `UNVERIFIED` with `inspection-only` evidence.
 
-`scripts/package-release.ts` first requires projection parity, validates those
-records (and the complete seven-target matrix in release mode), archives each
+`scripts/package-release.ts` first regenerates the local projections, runs the
+two-build package determinism guard, validates those records (and the complete
+seven-target matrix in release mode), archives each
 `dist-release/<harness>/`, and emits the flat `version.json` plus
-`checksums.txt`, both installers, and binaries. The tag workflow tests the
-staged candidate on Unix and Windows, re-verifies its checksums immediately
-before publishing that same artifact, attests the staged files, exports the
-attestation bundle as `aidlc-release.intoto.jsonl`, and then creates the GitHub
-Release with the artifacts and bundle. The bundle is a separate trust channel
+`checksums.txt`, both installers, and binaries. The staging job re-verifies and
+uploads that candidate without signing. Unix and Windows lifecycle jobs verify
+its checksums and test it. After the release-environment gate, `publish`
+downloads the same candidate, re-verifies it, attests it, adds the exported
+`aidlc-release.intoto.jsonl` bundle, and always creates a draft. A read-only
+verification job validates the draft's downloaded assets before a separately
+gated promotion makes it public. The bundle is a separate trust channel
 and is intentionally absent from `version.json` and `checksums.txt`. This
 pipeline does not implement the deferred npm channel. See
 [Supply-Chain Security](19-supply-chain-security.md).
 
 ## Directory Structure
 
-The shipped Claude distribution (`dist/claude/.claude/`, regenerated
-byte-for-byte from `core/` + `harness/claude/`):
+The source-generated Claude projection (`dist/claude/.claude/`, materialized
+from `core/` + `harness/claude/`; the release archive carries the native form
+under `runtime/claude/.claude/`):
 
 ```
 dist/claude/.claude/

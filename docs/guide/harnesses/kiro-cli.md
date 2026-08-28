@@ -7,7 +7,7 @@
 > IDE-targeted distribution is documented separately in
 > [Running AI-DLC on Kiro IDE](kiro-ide.md).
 
-One of the framework's harnesses: `dist/kiro/` runs the same AI-DLC
+One of the framework's harnesses: the Kiro runtime runs the same AI-DLC
 methodology on [Kiro CLI](https://kiro.dev/docs/cli/). One deterministic core
 — the tools, 33 stage files, protocols, knowledge, sensors, scopes, and rules
 — is byte-shared across every harness; only the shell (skills, agent
@@ -16,8 +16,8 @@ configs, hook wiring, activation) differs.
 ## Prerequisites
 
 - **Kiro CLI ≥ 2.6** (`kiro-cli --version`), logged in (`kiro-cli login`)
-- **bun** on your PATH for the copy channel
-  (`curl -fsSL https://bun.sh/install | bash`). The native channel is
+- **bun** only when generating or running the source/development `dist/`
+  projection. Native installs and versioned release runtimes are
   self-contained.
 
 ## Install
@@ -58,33 +58,29 @@ The native projection allows `aidlc engine *` engine commands. It also ships
 active without an agent flag. Run `/aidlc --doctor` in chat before the first
 workflow.
 
-### Source/development copy alternative
+### Versioned manual-copy alternative
 
-The copies below come from a clone of the
-[aidlc-workflows](https://github.com/awslabs/aidlc-workflows) repository on the
-`v2` branch:
-
-```bash
-git clone https://github.com/awslabs/aidlc-workflows.git
-cd aidlc-workflows
-git checkout v2
-```
+Download and extract a specific release's `aidlc-runtime.tar.gz` as described in
+[Install and Lifecycle: Copy Channel](../18-install-and-lifecycle.md#copy-channel),
+then set `RUNTIME_ROOT` to the extracted `runtime/` directory.
 
 ```bash
 mkdir -p your-project/.kiro your-project/aidlc
-cp -R dist/kiro/.kiro/. your-project/.kiro/
-cp -R dist/kiro/aidlc/. your-project/aidlc/    # the workspace shell (spaces/default/memory) — a sibling of .kiro/, not inside it
-cp dist/kiro/AGENTS.md your-project/AGENTS.md  # merge if you already have one
+cp -R "$RUNTIME_ROOT/kiro/.kiro/." your-project/.kiro/
+cp -R "$RUNTIME_ROOT/kiro/aidlc/." your-project/aidlc/    # the workspace shell (spaces/default/memory) — a sibling of .kiro/, not inside it
+cp "$RUNTIME_ROOT/kiro/AGENTS.md" your-project/AGENTS.md  # merge if you already have one
 ```
 
 The `aidlc/` directory is the workspace shell — it ships the pre-built
 `aidlc/spaces/default/memory/` method tree the engine reads. It is a **sibling**
-of `.kiro/`, so copy it separately (or copy the whole `dist/kiro/` tree at once).
+of `.kiro/`, so copy it separately (or copy the whole
+`$RUNTIME_ROOT/kiro/` tree at once).
 `/aidlc --doctor` fails its "workspace shell ready" check if it is missing.
 
-This source/development channel requires Git and Bun. The copied tree already
-contains the workspace shell; its projected config command may still record
-guided choices without a native install.
+The versioned runtime uses the native `aidlc` command. Framework developers who
+need the Bun-shaped source projection can clone the repository, run
+`bun install --frozen-lockfile` and `bun scripts/package.ts`, then use the
+ignored local `dist/kiro/` output instead.
 
 The install ships `.kiro/settings/cli.json` with `chat.defaultAgent: "aidlc"`,
 so the AI-DLC conductor agent is active by default — `/aidlc` just works.
@@ -155,7 +151,7 @@ inside a disposable sandbox where blanket shell access is acceptable.
 | Construction swarm | Parallel `Task` floor, optional ultracode Workflow | Subagent fan-out only; `AIDLC_USE_SWARM=1` is announced as a no-op |
 | Session audit events | `SESSION_STARTED/RESUMED/ENDED`, `SESSION_COMPACTED` | `SESSION_STARTED` only (Kiro has no session-end / pre-compaction hooks) |
 | Forwarding-loop enforcement (Stop hook) | Interactive + headless | Interactive sessions only — `--no-interactive` runs do not honor the stop-hook block |
-| Permissions | `settings.json` allowlist | Copy channel: project-relative framework `bun .kiro/tools/<tool>.ts` calls and `date -u`; native channel: `aidlc engine *`. Other shell commands prompt. |
+| Permissions | `settings.json` allowlist | Source-generated projection: project-relative framework `bun .kiro/tools/<tool>.ts` calls and `date -u`; native and versioned release runtimes: `aidlc engine *`. Other shell commands prompt. |
 | Welcome message | Rendered at session start from `settings.json` `companyAnnouncements` | None — Kiro has no welcome-render equivalent; the session-start hook injects resume context only |
 | MCP servers | Ships 5 (`.mcp.json`: `context7` + four AWS servers) | Ships the same 5 in `.kiro/settings/mcp.json`, all disabled by default; flip `"disabled": false` per server to enable it. Context7 is keyless on Kiro because Kiro sends configured HTTP header values verbatim instead of expanding environment placeholders. All 14 delegated personas opt in through `includeMcpJson: true` plus `@<server>` tool grants; the conductor gets none. |
 
@@ -173,12 +169,13 @@ harnesses (or running both side by side) is supported-but-untested; `/aidlc
 
 `dist/kiro` is **generated** from `core/` + `harness/kiro/` by
 `bun scripts/package.ts kiro` (core copy with the `{{HARNESS_DIR}}` token
-substituted to `.kiro` and the `rules/` → `steering/` rename). `bun
-scripts/package.ts --check` is the drift guard and runs in CI (t145). The
+substituted to `.kiro` and the `rules/` → `steering/` rename). The output is
+ignored and local. `bun scripts/package.ts --check` builds twice in independent
+temporary roots and byte-compares the results as the CI determinism guard. The
 authored Kiro surfaces live in `harness/kiro/`: the orchestrator skill
 (`skills/aidlc/`), the agent JSONs (`agents/`), the hook adapter
 (`hooks/aidlc-kiro-adapter.ts`), `settings/cli.json`, `settings/mcp.json`, and `AGENTS.md` — edit
-those (or `core/`), never the generated `dist/kiro`. See
+those (or `core/`), never hand-edit the generated `dist/kiro`. See
 [Porting to a New Harness](../../harness-engineering/09-porting-to-a-new-harness.md).
 
 A live TUI journey test exists alongside the Claude twins:

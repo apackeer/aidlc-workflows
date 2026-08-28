@@ -1,11 +1,11 @@
 # AI-DLC on Codex CLI
 
-`dist/codex/` is one of the framework's harness distributions, for the
+The Codex runtime is one of the framework's harness distributions, for the
 OpenAI **Codex CLI** harness. One deterministic core, many harnesses: the
 engine, state machine, audit log, graph, swarm referee, and learnings gate are
 byte-identical across every distribution — only the shell differs. The
-tree is **generated** from `core/` + `harness/codex/` by `bun scripts/package.ts codex`;
-never hand-edit it (the drift guard fails CI).
+source/development tree is **generated** into ignored local `dist/codex/` from
+`core/` + `harness/codex/` by `bun scripts/package.ts codex`; never hand-edit it.
 
 ## Prerequisites
 
@@ -14,8 +14,9 @@ never hand-edit it (the drift guard fails CI).
   can run without the restored workflow mission. Releases before 0.139.0 also
   lack reliable subagent role attribution and hyphenated agent-TOML resolution.
   `/aidlc --doctor` advises on the pin. Check with `codex --version`.
-- **bun** for the copy channel; its tools and hooks run through Bun. The
-  native channel is self-contained.
+- **bun** only when generating or running the source/development `dist/`
+  projection. Native installs and versioned release runtimes are
+  self-contained.
 - **A Git repository for the target project** — Codex discovers project
   `.codex/hooks.json` only inside one. The native installer and AI-DLC runtime
   themselves do not depend on Git.
@@ -68,33 +69,27 @@ trust action before those hooks run:
 Merge the generated `.codex/config.toml` settings into your user config as
 needed. Then run `$aidlc --doctor` in Codex.
 
-### Source/development copy alternative
+### Versioned manual-copy alternative
 
-The copies below come from a clone of the
-[aidlc-workflows](https://github.com/awslabs/aidlc-workflows) repository on the
-`v2` branch:
-
-```bash
-git clone https://github.com/awslabs/aidlc-workflows.git
-cd aidlc-workflows
-git checkout v2
-```
+Download and extract a specific release's `aidlc-runtime.tar.gz` as described in
+[Install and Lifecycle: Copy Channel](../18-install-and-lifecycle.md#copy-channel),
+then set `RUNTIME_ROOT` to the extracted `runtime/` directory.
 
 1. Copy the distribution into your project (which must be a **git
    repository** — Codex only discovers a project `.codex/hooks.json` inside
    one):
 
    ```bash
-   cp -r dist/codex/.codex/  your-project/.codex/
-   cp -r dist/codex/.agents/ your-project/.agents/
-   cp -r dist/codex/aidlc/   your-project/aidlc/      # the workspace shell (spaces/default/memory) — a sibling of .codex/, not inside it
-   cp dist/codex/AGENTS.md   your-project/AGENTS.md   # or merge into yours
+   cp -r "$RUNTIME_ROOT/codex/.codex/"  your-project/.codex/
+   cp -r "$RUNTIME_ROOT/codex/.agents/" your-project/.agents/
+   cp -r "$RUNTIME_ROOT/codex/aidlc/"   your-project/aidlc/      # the workspace shell (spaces/default/memory) — a sibling of .codex/, not inside it
+   cp "$RUNTIME_ROOT/codex/AGENTS.md"   your-project/AGENTS.md   # or merge into yours
    ```
 
    The `aidlc/` directory is the workspace shell — it ships the pre-built
    `aidlc/spaces/default/memory/` method tree the engine reads. It is a
    **sibling** of `.codex/`, so copy it separately (or copy the whole
-   `dist/codex/` tree at once). `$aidlc --doctor` fails its "workspace shell
+   `$RUNTIME_ROOT/codex/` tree at once). `$aidlc --doctor` fails its "workspace shell
    ready" check if it is missing.
 
 2. Apply the `.gitignore` entries from the shipped `AGENTS.md` § "Git
@@ -145,11 +140,12 @@ git checkout v2
    bun .codex/tools/aidlc-utility.ts doctor
    ```
 
-This source/development channel requires Git and Bun. The copied tree already
-contains the project shell; its projected config command may still record
-guided choices without a native install. Its
-source-checkout trust generator is specific to Bun-shaped hook commands and is
-not used by the native channel.
+The versioned runtime uses the native `aidlc` command. Framework developers who
+need the Bun-shaped projection can clone the repository, run
+`bun install --frozen-lockfile` and `bun scripts/package.ts`, then use the
+ignored local `dist/codex/` output. The source-checkout trust generator is
+specific to those Bun-shaped hook commands and is not used by the native
+runtime.
 
 ## Refresh and version skew
 
@@ -218,7 +214,7 @@ implicit skill matching so 37 runner descriptions don't pollute the index).
 
 ```bash
 bun scripts/package.ts codex          # regenerate dist/codex from core/ + harness/codex/
-bun scripts/package.ts --check        # CI drift guard (every harness)
+bun scripts/package.ts --check        # build twice and byte-compare (every harness)
 ```
 
 Core `.ts` files are byte-identical to their `core/tools/` and `core/hooks/`

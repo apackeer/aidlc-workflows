@@ -11,7 +11,7 @@ Contributions to this implementation are welcome. This guide covers prerequisite
 ## Prerequisites
 
 - **Claude Code** -- native install (recommended, auto-updates): macOS/Linux/WSL `curl -fsSL https://claude.ai/install.sh | bash`; Windows PowerShell `irm https://claude.ai/install.ps1 | iex`. Or `brew install --cask claude-code`. (see [Claude Code docs](https://code.claude.com/docs/en/quickstart))
-- **bun** -- Required to build, package, test, directly run authored TypeScript sources, and use the `dist/<harness>/` copy projections. Native `dist-release/<harness>/` installations use the self-contained `aidlc` command. Install via `curl -fsSL https://bun.sh/install | bash`; on Windows use `powershell -c "irm bun.sh/install.ps1 | iex"`.
+- **bun** -- Required to build, package, test, directly run authored TypeScript sources, and use locally generated `dist/<harness>/` projections. Native release runtimes use the self-contained `aidlc` command. Install via `curl -fsSL https://bun.sh/install | bash`; on Windows use `powershell -c "irm bun.sh/install.ps1 | iex"`.
 - **timeout** (GNU coreutils) -- Required by the test suite for LLM test timeouts (L2/L3). Pre-installed on Linux. macOS: `brew install coreutils` then add gnubin to PATH: `export PATH="/opt/homebrew/opt/coreutils/libexec/gnubin:$PATH"` (in `~/.zshenv` or `~/.zshrc`).
 - **Bash** -- Optional for the POSIX compatibility wrapper (`tests/run-tests.sh`). The primary test runner is `bun tests/run-tests.ts`; at runtime, none of the distributable hooks require Bash.
 - **Bedrock access** -- Required for running live integration and e2e tests (L2/L3). Not needed for L1 protocol tests.
@@ -28,9 +28,9 @@ bun install --frozen-lockfile
 ```
 core/                # Hand-authored, harness-neutral source (tools, stages, agents, rules, knowledge, hooks)
 harness/<name>/      # Per-harness authored surfaces; claude/, kiro/, kiro-ide/, codex/, opencode/, copilot/
-scripts/package.ts   # The build: regenerates dist/<harness>/ from core/ + harness/ (`--check` drift-guards it)
+scripts/package.ts   # The build: materializes ignored local projections (`--check` builds twice and compares)
 scripts/build-binaries.ts # Release-only compiled CLI artifacts in ignored build/binaries/ after package --check
-dist/<harness>/      # GENERATED: dist/claude/, dist/kiro/, dist/kiro-ide/, dist/codex/, dist/opencode/, dist/copilot/ — never hand-edit
+dist/<harness>/      # GENERATED + ignored: dist/claude/, dist/kiro/, dist/kiro-ide/, dist/codex/, dist/opencode/, dist/copilot/ — never hand-edit or commit
 tests/               # All-TypeScript test suite (t*.test.ts, run via bun)
 docs/                # Documentation
   guide/             # User guide (how to use AI-DLC)
@@ -45,7 +45,7 @@ For the full architecture, see [reference/01-architecture.md](01-architecture.md
 1. **Fork and branch** from `v2` (the integration branch and PR target), then run `bun install --frozen-lockfile`
 2. **Read the architecture** -- [reference/01-architecture.md](01-architecture.md) explains the execution model, agent delegation, and hook system
 3. **Understand the entry points** -- the deterministic engine `core/tools/aidlc-orchestrate.ts` (with exactly four subcommands: `next`, `continue`, `report`, and `park`; `continue` is internal steering transport) owns routing; the conductor `harness/claude/skills/aidlc/SKILL.md` is a thin forwarding loop that acts on its directives. For the normative engine / directive / conductor / swarm contract see [The Skill System](17-skill-system.md)
-4. **Make changes** -- Edit the harness-neutral source in `core/` (tools, stages, agents, hooks, rules, knowledge) or a harness surface in `harness/<name>/` (the orchestrator skill, settings). Then run `bun scripts/package.ts` to regenerate both `dist/` and `dist-release/` — never hand-edit either generated root, because `package.ts --check` independently rebuilds and compares both
+4. **Make changes** -- Edit the harness-neutral source in `core/` (tools, stages, agents, hooks, rules, knowledge) or a harness surface in `harness/<name>/` (the orchestrator skill, settings). Then run `bun scripts/package.ts` to materialize the ignored local `dist/` and `dist-release/` roots. Never hand-edit or commit either root. `package.ts --check` ignores those on-disk trees, builds the complete projection set twice in independent temporary roots, and byte-compares the results.
 5. **Test** -- Run `bun tests/run-tests.ts` before submitting
 6. **Submit** -- Open a PR against `v2`
 
@@ -67,23 +67,24 @@ The staged `runtime/<harness>/` trees are read-only fallbacks; mutating commands
 must target an installed project harness. Any failed gate fails the build.
 
 After the target binaries are present, `bun scripts/package-release.ts`
-packages the committed `dist-release/` projections into per-harness archives
-and emits `version.json`, `checksums.txt`, `install.sh`, and `install.ps1`. The
-per-target `runtime/` directories are smoke-gate staging; release data archives
-are rebuilt from the committed native projections, not copied from those
-sidecars. `--require-release-matrix` requires all seven targets and a matching
+regenerates and verifies the local projections, packages `dist-release/` into
+the versioned `aidlc-runtime.tar.gz`, and emits `version.json`, `checksums.txt`,
+`install.sh`, and `install.ps1`. The per-target `runtime/` directories are
+smoke-gate staging; release data archives are rebuilt from the freshly
+generated native projections, not copied from those sidecars.
+`--require-release-matrix` requires all seven targets and a matching
 verification record for each binary. The generated flat directory is the
 contract consumed by the installer and `release packaging tooling`.
 
 The tag-triggered release workflow is deliberately candidate-preserving:
 verification and installer lint run first; target-native jobs produce binaries
-and evidence; `package-release.ts` runs once to create `release-candidate`;
-Unix/Windows lifecycle jobs consume that artifact; and the publish job downloads
-the same candidate, checks tag/version parity, runs `sha256sum -c`, creates the
-GitHub build-provenance attestation, exports
-`aidlc-release.intoto.jsonl`, and only then publishes the release asset set.
-Never rebuild or repackage in the publish job, because that would attest bytes
-the lifecycle jobs did not exercise. The full trust design is
+and evidence; `package-release.ts` runs once to create `release-candidate`; the
+staging job checksums and uploads it without signing; and Unix/Windows lifecycle
+jobs consume those bytes. After the protected release gate, `publish`
+re-verifies and attests the candidate and always creates a draft. A read-only
+job verifies the draft's actual checksums, tag/version parity, and online plus
+offline provenance before a separately gated promotion makes it public. Never
+rebuild, repackage, or substitute bytes after staging. The full trust design is
 [Supply-Chain Security](19-supply-chain-security.md).
 
 ## Testing
@@ -133,7 +134,7 @@ behavior accidentally:
    and compiled/dev parity when applicable.
 5. If authored prose invokes the command, use `{{INVOKE}}` or
    `{{TOOL_PREFIX}}` so copy and native projections stay distinct. Regenerate
-   both channels and run the package drift guard.
+   both local channels and run the package determinism guard.
 
 ## Adding an Install-Mechanism Mutation
 

@@ -10,7 +10,7 @@ a stage *does*.
 
 Contributors read this to understand the format. When writing or editing a
 stage file, refer to the authoritative contract at
-`dist/claude/.claude/aidlc-common/protocols/stage-definition.md`. That file is
+`core/aidlc-common/protocols/stage-definition.md`. That file is
 the canonical spec — this chapter adds narrative and "when to use" guidance.
 
 ---
@@ -57,7 +57,7 @@ which artifacts a stage produces while editing its prose.
 ┌─────────┐         ┌──────────────────┐         ┌──────────────────┐         ┌──────────────────┐
 │ Edit    │  ───→   │ Pre-commit hook  │  ───→   │ stage-graph.json │  ───→   │ loadStageGraph() │
 │ stage   │         │ aidlc-graph      │         │ (build artifact, │         │ (runtime,        │
-│ .md YAML│         │ compile          │         │  checked in)     │         │  unchanged)      │
+│ .md YAML│         │ compile          │         │  generated)      │         │  unchanged)      │
 └─────────┘         └──────────────────┘         └──────────────────┘         └──────────────────┘
      │                                                                                 ▲
      │                              ┌──────────────────┐                               │
@@ -66,8 +66,9 @@ which artifacts a stage produces while editing its prose.
                                     └──────────────────┘
 ```
 
-The YAML is authoritative. The JSON is a build artifact. CI enforces the
-relationship.
+The YAML is authoritative. The JSON is a generated build artifact. Repository
+packaging regenerates it from source; installed runtimes may also recompile it
+after plugin composition.
 
 `aidlc-graph compile` and `compile --check` ship as CLI subcommands (milestone 9);
 run compile manually after editing stage YAML, and CI enforces `compile
@@ -444,7 +445,7 @@ file, add the required frontmatter, and the helpers pick it up at runtime.
 ## Worked example
 
 The canonical example is `scope-definition`. The normative YAML block lives
-in `dist/claude/.claude/aidlc-common/protocols/stage-definition.md` — refer
+in `core/aidlc-common/protocols/stage-definition.md` — refer
 there rather than duplicating here.
 
 The example encodes, in structured form, what today's prose describes:
@@ -543,7 +544,7 @@ replaces the `Reserved` marker with the real emitter path.
 
 ## Cross-references
 
-- `dist/claude/.claude/aidlc-common/protocols/stage-definition.md` — the
+- `core/aidlc-common/protocols/stage-definition.md` — the
   authoritative spec this chapter narrates.
 - [Stage Protocol](04-stage-protocol.md) — runtime execution behaviour.
 - [Agent System](05-agent-system.md) — parallel YAML-first contract for

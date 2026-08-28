@@ -12,7 +12,7 @@ file, unioned with each stage's `optional_produces[]` (artifacts a stage may
 conditionally write per unit, see the field reference in
 `15-stage-definition.md`), so a conditionally-produced name stays registered
 and resolvable to its producer. A helper in
-`dist/claude/.claude/tools/aidlc-graph.ts` reads the compiled stage graph and
+`core/tools/aidlc-graph.ts` reads the compiled stage graph and
 returns the union as a set — the same pattern used for scopes
 (`validScopes()` at `aidlc-lib.ts:772`) and for agents (`loadAgents()` at
 `aidlc-lib.ts:794`). Keeping the registry out of this chapter prevents the
@@ -28,7 +28,7 @@ identifier in `consumes[]` to declare a read dependency. The identifier is
 a short kebab-case string — no file extension, no folder prefix, no slash.
 
 Concrete example from milestone 4's worked example in
-`dist/claude/.claude/aidlc-common/protocols/stage-definition.md`:
+`core/aidlc-common/protocols/stage-definition.md`:
 
 ```yaml
 slug: scope-definition
@@ -96,7 +96,7 @@ stage is populated.
 
 Every canonical name must satisfy `/^[a-z][a-z0-9-]*$/` — the shape
 enforced by `SLUG_RE` in
-`dist/claude/.claude/tools/aidlc-stage-schema.ts`. That means:
+`core/tools/aidlc-stage-schema.ts`. That means:
 
 - **Lowercase only.** `scope-document`, not `ScopeDocument` or
   `SCOPE_DOCUMENT`.
@@ -186,7 +186,7 @@ under the per-intent record dir. They land in the durable, per-repo code
 knowledge base at `aidlc/spaces/<space>/codekb/<repo>/` — a store shared across
 every intent in the space, keyed by repo rather than by intent. The path is
 resolved outside the record-relative rule via the `isCodekb` branch in
-`resolveArtifactPath` (`dist/claude/.claude/tools/aidlc-orchestrate.ts`), and
+`resolveArtifactPath` (`core/tools/aidlc-orchestrate.ts`), and
 the same directory is printed by the read-only native route
 `aidlc engine workspace codekb`.
 
@@ -259,7 +259,7 @@ at tag time and the registry at HEAD is a one-line `diff`.
 
 ## Cross-references
 
-- `dist/claude/.claude/aidlc-common/protocols/stage-definition.md` —
+- `core/aidlc-common/protocols/stage-definition.md` —
   authoritative stage format spec; defines `produces[]` / `consumes[]`
   as structured fields.
 - [Stage Definition](15-stage-definition.md) — narrative chapter on the
@@ -269,5 +269,5 @@ at tag time and the registry at HEAD is a one-line `diff`.
   the doc.
 - [User Guide — Artifacts Reference](../guide/14-artifacts-reference.md)
   — user-facing artifact lifecycle and directory layout.
-- `dist/claude/.claude/tools/aidlc-graph.ts` — the derivation tool
+- `core/tools/aidlc-graph.ts` — the derivation tool
   (`artifactsRegistry()` + `artifacts` CLI subcommand).

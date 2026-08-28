@@ -21,9 +21,9 @@ hook discovery requires a Git repository):
 | Prerequisite | Purpose | Install |
 |-------------|---------|---------|
 | **Claude Code** | This implementation runs as a Claude Code command. The orchestrator, agents, and hooks all execute within Claude Code. | Native install (recommended, auto-updates): macOS/Linux/WSL `curl -fsSL https://claude.ai/install.sh \| bash`; Windows PowerShell `irm https://claude.ai/install.ps1 \| iex`. Or `brew install --cask claude-code`. ([docs](https://code.claude.com/docs/en/quickstart)) |
-| **bun** | Required only by the source/development copy channel, whose tools and hooks remain TypeScript. The native installer and native project runtime do not use it. | `curl -fsSL https://bun.sh/install \| bash` ([docs](https://bun.sh)). On Windows: `npm install -g bun` or `powershell -c "irm bun.sh/install.ps1 \| iex"` |
+| **bun** | Required only to build or run the source/development `dist/` projection. The native installer and versioned release runtimes do not use it. | `curl -fsSL https://bun.sh/install \| bash` ([docs](https://bun.sh)). On Windows: `npm install -g bun` or `powershell -c "irm bun.sh/install.ps1 \| iex"` |
 
-> **Copy installs only**: `bun` must be on your `PATH` for non-interactive
+> **Source-generated `dist/` installs only**: `bun` must be on your `PATH` for non-interactive
 > shells. Claude Code runs your shell non-interactively, so it sources
 > `~/.zshenv` (zsh) or `~/.bashrc` (bash), not `~/.zshrc`. Native installs use
 > the `aidlc` executable instead.
@@ -32,8 +32,8 @@ Verify prerequisites:
 
 ```bash
 command -v claude >/dev/null && echo "✓ Claude Code installed" || echo "✗ Install Claude Code first"
-# Source/development copy channel only:
-command -v bun    >/dev/null && echo "✓ bun installed"          || echo "✗ Install bun before copying dist/claude"
+# Source/development build only:
+command -v bun    >/dev/null && echo "✓ bun installed"          || echo "✗ Install bun before generating dist/"
 ```
 
 ## AWS Bedrock Setup
@@ -147,17 +147,16 @@ Missing credentials are not blocking. A server you have no credentials for — n
 
 ## Installation
 
-AI-DLC installs by copying its distribution for your harness into your project.
-Step 1 below has the copy commands for every harness; the rest of this chapter
-continues on **Claude Code** (the `dist/claude/` tree, which ships as a
-`.claude/` directory). On another harness, finish the install in its chapter
-instead - [Running on Kiro CLI](harnesses/kiro-cli.md),
+The recommended path installs the native `aidlc` command, then runs
+`aidlc config` to create the selected harness runtime in your project. The rest
+of this chapter continues on **Claude Code**. On another harness, finish the
+install in its chapter instead - [Running on Kiro CLI](harnesses/kiro-cli.md),
 [Running on Kiro IDE](harnesses/kiro-ide.md),
 [Running on Codex CLI](harnesses/codex-cli.md),
 [AI-DLC on Cursor](harnesses/cursor.md),
 [AI-DLC on opencode](harnesses/opencode.md), or
 [AI-DLC on GitHub Copilot](harnesses/copilot.md) - each covers the prerequisites
-and post-copy steps that differ.
+and host-specific steps that differ.
 
 ### Step 1: Install the native runtime
 
@@ -231,7 +230,9 @@ Continue with the next step for the selected harness:
 | Kiro CLI | Run `kiro-cli chat`, then `/aidlc --doctor`. | The workspace selects the `aidlc` agent by default and permits its `aidlc engine *` engine calls. |
 | Kiro IDE | Open the project in Kiro IDE, then run `/aidlc --doctor`. | Config merges `aidlc engine *` into `kiroAgent.trustedCommands` without replacing other `.vscode/settings.json` keys. |
 | Codex CLI | In a Git repository, run `codex`, approve the hook trust dialog, then `$aidlc --doctor`. | Codex requires one trust action: approve interactively or merge the generated `.codex/trust-seed.toml` entries into `$CODEX_HOME/config.toml`. |
+| Cursor | Open the project in Cursor or run `agent`, then `/aidlc --doctor`. | Config installs Cursor's hooks, skills, agents, rules, and managed root integrations transactionally. |
 | opencode | Run `opencode`, then `/aidlc --doctor`. | The projected `opencode.json` allows direct `aidlc engine *` calls; other shell commands still prompt. |
+| GitHub Copilot | Open the project in Copilot CLI or VS Code agent mode, trust the folder, then `/aidlc --doctor`. | Config merges the `aidlc`-prefixed `.github/` surfaces and project-root instruction blocks. |
 
 ### Refresh and version skew
 
@@ -252,30 +253,42 @@ Complete the workflow before rerunning config. `aidlc update` and
 `aidlc use` remain safe during a workflow because they do not touch
 project files.
 
-### Source/development copy alternative
+### Versioned manual-copy alternative
 
-The committed `dist/<harness>/` trees remain available for framework
-development and source-based installs. This channel requires a repository clone,
-Git, and Bun; its hooks and tools run the projected TypeScript files. It does
-not need a scaffold step because the copied tree already contains the workspace
-shell. After copying, the projected Bun command may run guided config to record
-models, flags, providers, runtime, and trust answers. A framework-file refresh
-still requires a native release or a fresh copy from this checkout.
+Manual-copy users download the runtime archive from a specific release rather
+than copying a repository tree:
 
 ```bash
-git clone https://github.com/awslabs/aidlc-workflows.git
-cd aidlc-workflows
-git checkout v2
+tag=vX.Y.Z
+tmp="$(mktemp -d)"
+release_repo="${AIDLC_RELEASE_REPOSITORY:-awslabs/aidlc-workflows}"
+release_workflow="${AIDLC_RELEASE_WORKFLOW:-$release_repo/.github/workflows/release.yml}"
+gh release download "$tag" --repo "$release_repo" --dir "$tmp" \
+  --pattern aidlc-runtime.tar.gz \
+  --pattern checksums.txt \
+  --pattern aidlc-release.intoto.jsonl
+gh attestation verify "$tmp/checksums.txt" \
+  --bundle "$tmp/aidlc-release.intoto.jsonl" \
+  --repo "$release_repo" \
+  --signer-workflow "$release_workflow" \
+  --source-ref "refs/tags/$tag"
+(cd "$tmp" && grep '  aidlc-runtime.tar.gz$' checksums.txt | sha256sum -c -)
+tar -xzf "$tmp/aidlc-runtime.tar.gz" -C "$tmp"
+RUNTIME_ROOT="$tmp/runtime"
 ```
+
+The archive contains `runtime/<harness>/` for every harness. It is the
+version-matched native projection and invokes the installed `aidlc` command.
+Cursor's optional manual-copy `install.ts` helper additionally needs Bun while
+it performs the project merge.
 
 <details markdown="1">
 <summary><strong>Claude Code</strong></summary>
 
 ```bash
-cp -r dist/claude/.claude/ your-project/.claude/
-cp -r dist/claude/aidlc/   your-project/aidlc/
-cd your-project
-bun .claude/tools/aidlc.ts config  # optional guided setup; opening Claude directly is also valid
+cp -r "$RUNTIME_ROOT/claude/.claude/" your-project/.claude/
+cp -r "$RUNTIME_ROOT/claude/aidlc/"   your-project/aidlc/
+aidlc doctor --project-dir your-project
 ```
 
 </details>
@@ -285,9 +298,9 @@ bun .claude/tools/aidlc.ts config  # optional guided setup; opening Claude direc
 
 ```bash
 mkdir -p your-project/.kiro your-project/aidlc
-cp -R dist/kiro/.kiro/. your-project/.kiro/
-cp -R dist/kiro/aidlc/. your-project/aidlc/
-cp dist/kiro/AGENTS.md your-project/AGENTS.md  # merge if one exists
+cp -R "$RUNTIME_ROOT/kiro/.kiro/." your-project/.kiro/
+cp -R "$RUNTIME_ROOT/kiro/aidlc/." your-project/aidlc/
+cp "$RUNTIME_ROOT/kiro/AGENTS.md" your-project/AGENTS.md  # merge if one exists
 ```
 
 </details>
@@ -297,9 +310,9 @@ cp dist/kiro/AGENTS.md your-project/AGENTS.md  # merge if one exists
 
 ```bash
 mkdir -p your-project/.kiro your-project/aidlc
-cp -R dist/kiro-ide/.kiro/. your-project/.kiro/
-cp -R dist/kiro-ide/aidlc/. your-project/aidlc/
-cp dist/kiro-ide/AGENTS.md your-project/AGENTS.md  # merge if one exists
+cp -R "$RUNTIME_ROOT/kiro-ide/.kiro/." your-project/.kiro/
+cp -R "$RUNTIME_ROOT/kiro-ide/aidlc/." your-project/aidlc/
+cp "$RUNTIME_ROOT/kiro-ide/AGENTS.md" your-project/AGENTS.md  # merge if one exists
 ```
 
 </details>
@@ -308,10 +321,10 @@ cp dist/kiro-ide/AGENTS.md your-project/AGENTS.md  # merge if one exists
 <summary><strong>Codex CLI</strong></summary>
 
 ```bash
-cp -r dist/codex/.codex/  your-project/.codex/
-cp -r dist/codex/.agents/ your-project/.agents/
-cp -r dist/codex/aidlc/   your-project/aidlc/
-cp dist/codex/AGENTS.md   your-project/AGENTS.md  # merge if one exists
+cp -r "$RUNTIME_ROOT/codex/.codex/"  your-project/.codex/
+cp -r "$RUNTIME_ROOT/codex/.agents/" your-project/.agents/
+cp -r "$RUNTIME_ROOT/codex/aidlc/"   your-project/aidlc/
+cp "$RUNTIME_ROOT/codex/AGENTS.md"   your-project/AGENTS.md  # merge if one exists
 ```
 
 Apply the copy channel's `.gitignore` and hook trust steps from
@@ -323,7 +336,7 @@ Apply the copy channel's `.gitignore` and hook trust steps from
 <summary><strong>Cursor</strong></summary>
 
 ```bash
-bun dist/cursor/install.ts your-project
+bun "$RUNTIME_ROOT/cursor/install.ts" your-project
 ```
 
 Then continue in [AI-DLC on Cursor](harnesses/cursor.md) for IDE and CLI usage, hook behavior, permissions, and installer refresh rules.
@@ -334,17 +347,36 @@ Then continue in [AI-DLC on Cursor](harnesses/cursor.md) for IDE and CLI usage, 
 <summary><strong>opencode</strong></summary>
 
 ```bash
-cp -r dist/opencode/.aidlc/    your-project/.aidlc/
-cp -r dist/opencode/.opencode/ your-project/.opencode/
-cp -r dist/opencode/aidlc/     your-project/aidlc/
-cp dist/opencode/opencode.json your-project/opencode.json  # merge if one exists
-cp dist/opencode/AGENTS.md     your-project/AGENTS.md       # merge if one exists
+cp -r "$RUNTIME_ROOT/opencode/.aidlc/"    your-project/.aidlc/
+cp -r "$RUNTIME_ROOT/opencode/.opencode/" your-project/.opencode/
+cp -r "$RUNTIME_ROOT/opencode/aidlc/"     your-project/aidlc/
+cp "$RUNTIME_ROOT/opencode/opencode.json" your-project/opencode.json  # merge if one exists
+cp "$RUNTIME_ROOT/opencode/AGENTS.md"     your-project/AGENTS.md       # merge if one exists
 ```
 
 Keep the load-bearing `skills`, `instructions`, and permission blocks when
 merging `opencode.json`.
 
 </details>
+
+<details markdown="1">
+<summary><strong>GitHub Copilot</strong></summary>
+
+```bash
+mkdir -p your-project/.aidlc your-project/aidlc your-project/.github
+cp -R "$RUNTIME_ROOT/copilot/.aidlc/."  your-project/.aidlc/
+cp -R "$RUNTIME_ROOT/copilot/aidlc/."   your-project/aidlc/
+cp -R "$RUNTIME_ROOT/copilot/.github/." your-project/.github/
+cp "$RUNTIME_ROOT/copilot/AGENTS.md"    your-project/AGENTS.md  # merge if one exists
+```
+
+</details>
+
+Framework developers may instead clone the repository, run
+`bun install --frozen-lockfile` followed by `bun scripts/package.ts`, and use
+the ignored local `dist/<harness>/` projections. Those source/development
+projections invoke TypeScript through Bun; `dist/` and `dist-release/` are never
+committed.
 
 ---
 
@@ -354,12 +386,13 @@ For a native install, `aidlc config` creates the workspace shell and its refresh
 baseline before the first harness session. It does not create a workflow intent
 and never uses the network.
 
-For a source/development copy install, there is no scaffold step. The
-distribution you copied already ships the
-workspace shell — the `.claude/` engine plus a pre-built `aidlc/spaces/default/`
-holding the memory layer (`aidlc/spaces/default/memory/`, where team-affirmed
-practices and learnings live). Running the copied harness's config command is
-optional and records guided choices; it does not require a native install.
+For a versioned manual copy or source/development projection, there is no
+scaffold step. The distribution you copied already ships the workspace shell —
+the `.claude/` engine plus a pre-built `aidlc/spaces/default/` holding the
+memory layer (`aidlc/spaces/default/memory/`, where team-affirmed practices and
+learnings live). A versioned release runtime uses the matching installed
+`aidlc` command. A source-generated `dist/` projection uses Bun and may run its
+projected config command to record guided choices.
 
 The first time you run `/aidlc` (or describe what to build), the engine
 **auto-births** the first intent into the active space. Each intent gets its own
@@ -442,10 +475,10 @@ Run 'bun .claude/tools/aidlc.ts doctor --verbose' to see every check.
 
 | Failure | Fix |
 |---------|-----|
-| `bun` not installed | Source/development copy only: install via `curl -fsSL https://bun.sh/install \| bash`. On Windows, use `npm install -g bun` or `powershell -c "irm bun.sh/install.ps1 \| iex"`. Ensure it is on PATH for non-interactive shells. |
-| Hook not present | Native: run `aidlc config` between workflows. Copy: re-copy the `.claude/` directory from the distribution. |
-| `settings.json` missing | Native: run `aidlc config`. Copy: re-copy `dist/claude/.claude/settings.json`. |
-| Workspace shell missing | Native: run `aidlc config`. Copy: re-copy the workspace shell from `dist/claude/` into the project root. |
+| `bun` not installed | Source-generated `dist/` only: install via `curl -fsSL https://bun.sh/install \| bash`. On Windows, use `npm install -g bun` or `powershell -c "irm bun.sh/install.ps1 \| iex"`. Ensure it is on PATH for non-interactive shells. |
+| Hook not present | Native: run `aidlc config` between workflows. Manual copy: re-copy the complete harness directory from the same versioned runtime archive. |
+| `settings.json` missing | Native: run `aidlc config`. Manual copy: restore `runtime/claude/.claude/settings.json` from the same release archive. |
+| Workspace shell missing | Native: run `aidlc config`. Manual copy: restore `runtime/claude/aidlc/` from the same release archive. |
 | State file issues | Archive the active intent's record dir under `aidlc/spaces/<space>/intents/` and run `/aidlc` to start fresh |
 | Graph/scope/schema/keyword failures | The diagnostic reports the specific artifact, slug, or scope name at fault. These indicate authoring drift in `.claude/aidlc-common/stages/` or `.claude/scopes/`; regenerate the compiled graph + scope grid with `{{INVOKE}} engine graph compile` or inspect the named stage/scope directly. |
 
@@ -475,17 +508,15 @@ See [Your First Workflow](02-your-first-workflow.md) for a step-by-step walkthro
 In your shell:
 
 ```bash
-# Verify prerequisites
+# Verify the harness and native command
 command -v claude >/dev/null && echo "✓ Claude Code" || echo "✗ Claude Code"
-command -v bun    >/dev/null && echo "✓ bun"          || echo "✗ bun"
+command -v aidlc  >/dev/null && echo "✓ aidlc"       || echo "✗ Install AI-DLC"
 
-# From your aidlc-workflows clone (v2 branch) - see Installation above
-# Install (engine + the workspace shell sibling)
-cp -r dist/claude/.claude/ your-project/.claude/
-cp -r dist/claude/aidlc/   your-project/aidlc/
-
-# Launch Claude Code in your project
-cd your-project && claude
+# Configure, verify, and launch Claude Code
+cd your-project
+aidlc config --harness claude
+aidlc doctor
+claude
 ```
 
 Inside the Claude Code session:

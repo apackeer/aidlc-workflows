@@ -1336,10 +1336,10 @@ narrative.
 
 ### Cross-References
 
-- **Orchestrator**: `dist/claude/.claude/skills/aidlc/SKILL.md` --
+- **Orchestrator**: `harness/claude/skills/aidlc/SKILL.md` --
   Routing logic, scope-to-stage mapping, stage graph, Construction flow
   definition
-- **Stage Protocol**: `dist/claude/.claude/aidlc-common/protocols/stage-protocol.md`
+- **Stage Protocol**: `core/aidlc-common/protocols/stage-protocol.md`
   -- Approval gates, question format, completion messages, and the §13 Learnings
   Ritual. Phase boundary verification lives in
   `stage-protocol-governance.md` §13.

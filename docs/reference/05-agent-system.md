@@ -31,7 +31,7 @@ tier: judgment                      # judgment | balanced | templated (see Agent
 | `description` | Yes | Brief role summary |
 | `tools` | No | Optional allowlist; omit to inherit the full session toolset. Listing it narrows the agent and drops inherited MCP tools unless `mcp__<server>__<tool>` ids are also listed |
 | `disallowedTools` | Yes | Must include `Task` -- only the conductor delegates |
-| `tier` | Yes | `judgment`, `balanced`, or `templated`. The AUTHORED dial: the packager projects it into each harness's native model/effort keys (see Agent Tiers below). Raw `model:`/`effort:` never appear in authored frontmatter -- they are projection OUTPUTS in `dist/<harness>/` |
+| `tier` | Yes | `judgment`, `balanced`, or `templated`. The AUTHORED dial: the packager projects it into each harness's native model/effort keys (see Agent Tiers below). Raw `model:`/`effort:` never appear in authored frontmatter -- they are projection OUTPUTS in the ignored local `dist/<harness>/` tree and versioned release runtime. |
 
 ### Markdown Body Sections
 
@@ -112,7 +112,12 @@ A project can select a lower tier projection at pack time, without editing any a
 - **Persistent knob:** a `tier_cap:` key in the YAML frontmatter of the space memory layer files (`core/memory/org.md` -> `team.md` -> `project.md`, last writer wins -- a project may lower OR raise the org ceiling). Example: `tier_cap: balanced` maps `judgment` to the measured reviewer baseline in every harness's projection. A `templated` ceiling maps higher tiers to the inheriting Writing up projection; use `aidlc config models` when the goal is an explicit lower-cost policy.
 - **Per-invocation override:** the `AIDLC_TIER_CAP` env var beats the memory layers for one packager run (`AIDLC_TIER_CAP=templated bun scripts/package.ts`). To build UNCAPPED once while a memory cap is in force, set it to the top tier -- `AIDLC_TIER_CAP=judgment` -- which beats the memory layer and clamps nothing (an empty value means unset, not uncapped).
 
-The two knobs differ in scope: the memory cap travels with the repo, so it applies in BOTH write and `--check` modes (a project that commits a capped dist stays self-consistent). The env var is a one-shot WRITE knob and is IGNORED under `--check` - the drift guard compares what the committed dist was legitimately built from, and a stray `AIDLC_TIER_CAP` in a CI or test runner's environment must neither fail nor mask drift (the packager prints a notice when it ignores one). The packager also prints the active cap and its source on every capped run.
+The two knobs differ in scope: the memory cap travels with the repo, so it
+applies in both write and `--check` modes and both temporary check builds use
+the same repository-defined cap. The environment variable is a one-shot write
+knob and is ignored under `--check`; a stray `AIDLC_TIER_CAP` in CI must not
+change the determinism measurement. The packager prints a notice when it
+ignores one and names the active cap and source on every capped write run.
 
 To opt a SINGLE agent out instead, edit the projected value in the installed
 harness directory (for example, set `model: opus` on one Claude agent `.md`).
@@ -175,8 +180,8 @@ Agent display names and example knowledge files are authoritative in each agent'
 
 1. Create `core/agents/{name}-agent.md` with the required frontmatter: `name`, `display_name`, `examples`, `description`, `disallowedTools` (including `Task`), `tier`. Never author raw `model:`/`effort:` in core frontmatter -- they are projection outputs (see Agent Tiers above). An optional `tools:` allowlist narrows the inherited toolset; omit it to inherit the full session toolset. `loadAgents()` in `core/tools/aidlc-lib.ts` discovers the file on next invocation.
 2. Add knowledge files to `core/knowledge/{name}-agent/`
-3. Add the agent to the stage files (`core/aidlc-common/stages/`) where it participates — set `lead_agent` / `support_agents` in each stage's frontmatter. The compiled `tools/data/stage-graph.json` is GENERATED from that frontmatter by `bun scripts/package.ts`; never hand-edit it (the `package.ts --check` drift guard fails CI on a hand-edited dist).
-4. Regenerate the distributions: `bun scripts/package.ts` (then `--check` to confirm no drift)
+3. Add the agent to the stage files (`core/aidlc-common/stages/`) where it participates — set `lead_agent` / `support_agents` in each stage's frontmatter. The compiled `tools/data/stage-graph.json` is GENERATED from that frontmatter by `bun scripts/package.ts`; never hand-edit generated output.
+4. Materialize the ignored local distributions with `bun scripts/package.ts`, then run `--check` to build twice and verify deterministic output.
 5. Add the agent→examples row to the hand-maintained knowledge tables (the space-level team-knowledge dir is `aidlc/knowledge/{name}-agent/`, created by the team when it has content — the engine does not scaffold it)
 6. Update tests: smoke tests for file existence, feature tests for stage-agent cross-references
 7. Update documentation in this file and [reference/agents/](agents/)

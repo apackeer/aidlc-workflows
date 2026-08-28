@@ -158,7 +158,9 @@ describe("t245 Kiro IDE hook registrations (v2 schema contract)", () => {
   test("upgrade instructions remove retired hook registrations before overlaying the new tree", () => {
     const guide = readFileSync(KIRO_IDE_GUIDE, "utf-8");
     const cleanupStart = guide.indexOf("for retired_hook in");
-    const overlayCopy = guide.indexOf("cp -R dist/kiro-ide/.kiro/.");
+    const overlayCopy = guide.indexOf(
+      'cp -R "$RUNTIME_ROOT/kiro-ide/.kiro/."',
+    );
 
     expect(cleanupStart).toBeGreaterThanOrEqual(0);
     expect(overlayCopy).toBeGreaterThan(cleanupStart);

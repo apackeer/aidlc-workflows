@@ -2,7 +2,7 @@
 
 > Audience: Tier 2/3 (team adopter, framework contributor).
 
-> **Path convention.** `<harness-dir>/` below = the harness's runtime dir (`.claude` / `.codex` / `.kiro` / `.aidlc`); `plugins/<name>/` = the authored plugin source; `dist/plugins/<name>/<harness>/` = the emitted, installable host plugin.
+> **Path convention.** `<harness-dir>/` below = the harness's runtime dir (`.claude` / `.codex` / `.kiro` / `.aidlc`); `plugins/<name>/` = the authored plugin source; `dist/plugins/<name>/<harness>/` = the ignored local host-plugin projection emitted by `bun scripts/package.ts`.
 
 This chapter is the canonical reference for the **AIDLC plugin** system: an optional, owned, versioned set of contributions — new stages, agents, scopes, method/rules, sensors, and *additive modifications to existing core stages* — authored once as a harness-neutral tree and **emitted as a real host plugin** for each harness. A plugin never edits `core/`; with every plugin disabled an install is byte-identical to bare core. The system generalizes the one proven edit-free seam (phase rules composed additively) to every surface, and delivers it through each host's own plugin machinery rather than a bespoke installer. Cross-link to [Stage Definition](15-stage-definition.md) (the stage frontmatter a plugin authors, including `plugin`/`number`/`when`), [Engine and Skill System](17-skill-system.md) (the graph the composer feeds and the orchestrator routes off), [Artifact Vocabulary](16-artifact-vocabulary.md) (the namespacing rule), and the authoring walkthrough [Authoring a Plugin](../harness-engineering/10-authoring-a-plugin.md).
 
@@ -437,6 +437,9 @@ portably, without a `sh -c` dependency on native Windows.
 **Install, per host:**
 
 ```bash
+# First materialize the ignored local plugin projections:
+bun scripts/package.ts
+
 # Claude Code
 /plugin marketplace add <repo-or-path>/dist/plugins/<name>/claude
 /plugin install aidlc-<name>@aidlc-plugins        # SessionStart hook composes on next session

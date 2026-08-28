@@ -86,7 +86,8 @@ must yours.
 
 **`tier` names the kind of work; the packager projects it into per-harness
 model/effort keys.** You never author raw `model:` or `effort:` in core agent
-frontmatter -- those are projection OUTPUTS in `dist/<harness>/`, derived from
+frontmatter -- those are projection OUTPUTS in the ignored local
+`dist/<harness>/` tree and versioned release runtime, derived from
 the tier table in `core/tools/aidlc-tiers.ts`. Pick `judgment` for any persona
 whose work is multi-constraint reasoning that cascades downstream --
 interpreting ambiguous intent, weighing architectural trade-offs under dense

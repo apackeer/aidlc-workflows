@@ -11,9 +11,12 @@ installer and lifecycle modules.
 Three controls answer different questions:
 
 1. **Release attestation.** GitHub artifact attestation verification proves
-   that an artifact digest has an attestation issued for
-   `awslabs/aidlc-workflows` by the release workflow. The protected-tag and
-   immutable-release policy binds those attested bytes to one release record.
+   that an artifact digest has an attestation issued for the configured release
+   repository by its trusted workflow. The default trust root is
+   `awslabs/aidlc-workflows` and
+   `awslabs/aidlc-workflows/.github/workflows/release.yml`. The protected-tag
+   and immutable-release policy binds those attested bytes to one release
+   record.
 2. **SLSA build provenance.** The signed provenance predicate records the
    source repository, source revision, GitHub Actions workflow, and build
    environment that produced the subject digest. It answers how and from what
@@ -34,9 +37,15 @@ commit or a manual dispatch naming an existing tag. Its authorization job proves
 that the immutable tag commit is an ancestor of `origin/v2`. A manual dispatch
 must itself run on that tag (`refs/tags/<tag>`), so the attestation source ref
 cannot silently remain the branch from which the workflow was opened.
-`gh release create` uses `--verify-tag`; the protected `release` environment
-requires non-author approval, and the publish job also requires the tag to equal
-`v<version.json.version>` before it can continue
+The protected `release` environment requires non-author approval. After that
+gate, `publish` rechecks the authorized tag SHA, requires the tag to equal
+`v<version.json.version>`, re-verifies checksums, attests the candidate, exports
+the Sigstore bundle, and uses `gh release create --verify-tag --draft`. A
+read-only `verify-release` job downloads the draft's actual assets and checks
+their checksums, online provenance, exported-bundle provenance, and tag/version
+parity. Only then may `promote`, behind the same protected environment, flip the
+draft public. Tag-push runs and manual runs with `draft: false` auto-promote;
+manual `draft: true` runs leave the verified draft unpublished
 (`.github/workflows/release.yml`).
 
 Published releases are immutable by policy. A defective artifact is corrected
@@ -44,10 +53,20 @@ by a new patch release. A compromised release is excluded from update
 discovery and linked to its corrective release without deleting the original
 release, tag, attestations, or audit record.
 
-`scripts/package-release.ts` stages `version.json` and `checksums.txt` before
-the publish job attests `build/release/*`. The workflow then copies the
-Sigstore bundle to the stable asset name
-`aidlc-release.intoto.jsonl` and creates the release. The bundle is
+`scripts/package-release.ts` stages `version.json`, `checksums.txt`, installers,
+binaries, and `aidlc-runtime.tar.gz`. The staging job verifies those bytes,
+then uploads one `release-candidate` without a provenance bundle. Unix and
+Windows lifecycle jobs checksum and test that exact artifact without signing
+permissions. After the human gate, `publish` downloads the candidate,
+re-verifies it, attests `build/release/*`, copies the Sigstore bundle to the
+stable asset name `aidlc-release.intoto.jsonl`, and creates the draft without
+rebuilding or repackaging. `verify-release` validates the assets downloaded
+from that draft, then serves the downloaded directory through a loopback
+GitHub-shaped `latest/download/` mirror and runs the real online installer with
+Bun removed from `PATH` and an absolute `gh` path. That rehearsal exercises
+release transport, the installer's mandatory provenance branch against the
+draft's exported bundle, native `version`, one Claude project config, and
+doctor before `promote` makes the draft public. The bundle is
 intentionally not listed in either `version.json` or `checksums.txt`: those
 files describe and digest the installable artifacts, while the bundle is its
 own trust channel and is verified with Sigstore or `gh attestation verify`.
@@ -57,26 +76,34 @@ own trust channel and is verified with Sigstore or `gh attestation verify`.
 ### Build tampering
 
 The build job uses commit-SHA-pinned third-party actions, installs the frozen
-`bun.lock`, runs the projection drift guard, and builds each target in a
-target-native matrix (`.github/workflows/release.yml`). The candidate is
-assembled once by `scripts/package-release.ts`, then consumed unchanged by
-Unix and Windows lifecycle tests before publication. GitHub artifact
-attestations provide the signed SLSA provenance for the staged digests.
+`bun.lock`, regenerates projections, runs the two-build package determinism
+guard, and builds each target in a target-native matrix
+(`.github/workflows/release.yml`). The candidate is assembled once and consumed
+unchanged by checksum-only Unix and Windows lifecycle tests. After approval,
+`publish` re-verifies and attests those bytes, creates a draft, and
+`verify-release` verifies the draft's actual assets before promotion. GitHub
+artifact attestations provide the signed SLSA provenance for the post-gate
+draft subjects.
 
 ### Release or tag hijack
 
 Tag protection and the protected `release` environment are required repository
 settings. They are not represented by files in this repository and must be
 confirmed before the first publication. The workflow independently rejects a
-tag whose commit is not on `v2`, rechecks that SHA in the publish job, uses
-`gh release create --verify-tag`, and compares the selected tag with
-`version.json.version` before attestation or publication
-(`.github/workflows/release.yml`).
+tag whose commit is not on `v2`; `publish` rechecks that SHA, compares the
+selected tag with `version.json.version`, and uses
+`gh release create --verify-tag --draft`. `verify-release` repeats tag/version
+parity against the downloaded draft. Public visibility begins only when the
+separately gated `promote` job succeeds (`.github/workflows/release.yml`).
 
 ### Mirror or download tampering
 
-The publish job runs `sha256sum -c checksums.txt` immediately before
-attestation. Remote installers and `core/tools/aidlc-release.ts` first verify
+The staging and lifecycle jobs establish pre-gate byte integrity through
+`checksums.txt`. After approval, `publish` repeats checksum verification and
+attests the candidate. `verify-release` then downloads the draft's real assets,
+checks their checksums, and verifies both online provenance and the exported
+offline bundle before promotion. Remote installers and
+`core/tools/aidlc-release.ts` first verify
 the attestation for `checksums.txt` against the repository, signer workflow,
 and release tag using `aidlc-release.intoto.jsonl`; only then do they verify the
 `version.json` checksum and each selected asset against both the manifest and
@@ -92,11 +119,15 @@ that version explicitly and retain their own accepted-version floor.
 
 ### Partial publication failure
 
-Publication has no destructive automatic rollback. The named publication
-owner must inspect the GitHub Release, prevent an incomplete release from
-remaining in latest/update discovery, preserve the failed record for audit,
-and publish a complete corrective patch release. The owner assignment is a
-focused-review decision in section 7.
+Publication has no destructive automatic rollback. A failed `verify-release`
+leaves an unpromoted draft, excluded from latest/update discovery, and no
+cleanup destroys its assets or audit evidence. The named publication owner must
+inspect that draft and publish a complete corrective patch release when needed.
+Because attestation occurs after the approval gate but before draft
+verification, a defective draft still leaves transparency-log entries. This
+rare, post-gate, defect-only exposure is accepted; it preserves evidence while
+preventing public promotion. The owner assignment is a focused-review decision
+in section 7.
 
 ### Compromised release
 
@@ -149,6 +180,17 @@ gh attestation verify ./aidlc-linux-x64 \
   --signer-workflow awslabs/aidlc-workflows/.github/workflows/release.yml
 ```
 
+Online installers and lifecycle commands use the same trust-root controls:
+
+- `AIDLC_RELEASE_REPOSITORY` selects the attested GitHub repository and defaults
+  to `awslabs/aidlc-workflows`.
+- `AIDLC_RELEASE_WORKFLOW` selects the signer workflow and defaults to
+  `<AIDLC_RELEASE_REPOSITORY>/.github/workflows/release.yml`.
+
+Fork and mirror operators must set these explicitly, together with the matching
+release base URL. A mirror URL does not implicitly broaden or replace the
+provenance trust root.
+
 Verify every artifact covered by the checksum file:
 
 ```bash
@@ -175,10 +217,15 @@ schema.
 - Every third-party action in `.github/workflows/release.yml` is pinned to a
   full 40-hex commit SHA, with the release line retained as a comment.
 - Workflow-global permissions are `contents: read`.
-- Only the publish job receives `contents: write`, `id-token: write`, and
+- No job before `publish` receives `id-token: write` or
   `attestations: write`.
-- Publication runs in the protected `release` environment and consumes the
-  authorization job's immutable tag SHA.
+- `publish` is the only signing job. It receives `contents: write`,
+  `id-token: write`, and `attestations: write` inside the protected `release`
+  environment and consumes the authorization job's immutable tag SHA.
+- `verify-release` receives `contents: read` only and verifies the draft's
+  downloaded assets.
+- `promote` receives `contents: write` only and crosses the protected `release`
+  environment before making the verified draft public.
 - OIDC supplies short-lived identity to Sigstore; no long-lived signing key is
   stored in the repository.
 - The release tag must be protected and must point to the reviewed
@@ -274,8 +321,9 @@ and explicit metadata refresh, but does not block a user-requested
    solely because content named a URL (`docs/reference/18-plugin-mechanism.md`).
 2. Authored content is never forked per release channel. `core/` and
    `harness/<name>/` are the hand-authored sources, and `scripts/package.ts`
-   generates both `dist/` and `dist-release/`. The drift guard requires both
-   channels to match those sources (`docs/reference/01-architecture.md`).
+   materializes ignored local `dist/` and `dist-release/` trees. The determinism
+   guard builds both channels and plugin projections twice in temporary roots
+   and requires byte-identical results (`docs/reference/01-architecture.md`).
 
 ## 11. Open items for focused review
 
@@ -283,6 +331,9 @@ and explicit metadata refresh, but does not block a user-requested
   naming `@awslabs/aidlc-admins` per section 7.
 - Create the protected `release` environment with non-author approval and
   self-review disabled.
+- Decide whether the second protected-environment approval on `promote` is an
+  acceptable tag-push UX cost. Do not remove the environment merely to avoid
+  that second approval; it is the boundary that keeps public visibility gated.
 - Confirm the team-based ownership assignment in section 7
   (`@awslabs/aidlc-admins` on every duty, with its two separation-of-duties
   qualifiers).

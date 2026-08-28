@@ -57,8 +57,9 @@ between workflows; refresh is refused while a workflow is active.
 
 ## Building and contributing
 
-Maintainers author in `core/` and regenerate both `dist/<harness>/` and
-`dist-release/<harness>/` with `bun scripts/package.ts` — see the
+Maintainers author in `core/` and materialize the ignored local
+`dist/<harness>/` and `dist-release/<harness>/` trees with
+`bun scripts/package.ts` — see the
 [Contributing Guide](reference/11-contributing.md) for the full build-and-test
 loop, and [Porting to a New Harness](harness-engineering/09-porting-to-a-new-harness.md)
 to add one.

@@ -203,8 +203,9 @@ If no state file exists, the framework treats this as a new workflow and asks fo
 
 ### Workflow Initialization — automatic
 
-For copy installs, there is no scaffold command. The shipped `dist/<harness>/` workspace shell
-arrives pre-built (the `.claude/` engine plus `aidlc/spaces/default/memory/`),
+For manual-copy installs, there is no scaffold command. The versioned
+`runtime/<harness>/` shell from `aidlc-runtime.tar.gz` arrives pre-built (the
+`.claude/` engine plus `aidlc/spaces/default/memory/`),
 and the engine **auto-births** the first intent on your first `/aidlc` (or when
 you describe what to build). Birth runs the three Initialization stages
 (Workspace Scaffold, Workspace Detection, State Init) as a single deterministic
@@ -222,10 +223,10 @@ or guardrails before the first run, edit the shipped `aidlc/spaces/default/memor
 files; the space-level `aidlc/knowledge/` directory is created (empty) once the
 first intent exists, and you add free-form files to it from there.
 
-The projected copy-channel config command is optional. It recognizes the
-existing projection and may record guided policy, provider, runtime, and trust
-answers without a native install. Refreshing framework files still requires a
-native runtime or a fresh copy from the checkout.
+The native config command is the preferred project installation and refresh
+path. Framework developers may generate the ignored Bun-shaped `dist/`
+projection locally with `bun scripts/package.ts`; release users should not copy
+from a checkout.
 
 For native machine installs, run `aidlc config` once before opening the harness.
 That command lays down the same shell and records a refresh baseline; workflow
@@ -741,10 +742,11 @@ Display a summary of available commands and flags.
 
 ## Deterministic CLI Tools
 
-The native dispatcher exposes stable public routes for user operations. The
-copy channel still implements those operations with Bun/TypeScript tools under
-the harness directory, and direct tool calls remain useful for plumbing that
-has no public route. Prefer `aidlc` whenever a route is documented below.
+The native dispatcher exposes stable public routes for user operations.
+Versioned release runtimes use those routes. A locally generated source
+projection implements the same operations with Bun/TypeScript tools under the
+harness directory, and direct tool calls remain useful for plumbing that has no
+public route. Prefer `aidlc` whenever a route is documented below.
 
 ### `aidlc engine workspace codekb` - resolve the code knowledge directory
 

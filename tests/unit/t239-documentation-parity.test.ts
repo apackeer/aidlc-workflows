@@ -48,8 +48,16 @@ function agentTokens(text: string): string[] {
 }
 
 function documentedDistNames(text: string): string[] {
-  return [...new Set([...text.matchAll(/dist\/([a-z][a-z-]+)\//g)].map((match) => match[1]))]
-    .sort();
+  return [
+    ...new Set([
+      ...[...text.matchAll(/(?:dist|runtime)\/([a-z][a-z-]+)\//g)].map(
+        (match) => match[1],
+      ),
+      ...[...text.matchAll(/--harness\s+([a-z][a-z-]+)/g)].map(
+        (match) => match[1],
+      ),
+    ]),
+  ].sort();
 }
 
 function eventCountClaimPattern(value: number): RegExp {

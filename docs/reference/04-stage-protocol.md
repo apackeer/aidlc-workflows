@@ -1,7 +1,7 @@
 # Stage Protocol Reference
 
-Human-readable restructuring of the machine-oriented protocol family under
-`dist/claude/.claude/aidlc-common/protocols/`. Preserves all rules, conditions,
+Human-readable restructuring of the machine-oriented protocol family authored
+under `core/aidlc-common/protocols/`. Preserves all rules, conditions,
 and behaviors while reorganizing for developer consumption. Section references
 map to the static protocol or the named conditional module.
 

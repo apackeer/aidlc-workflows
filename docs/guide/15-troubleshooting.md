@@ -68,9 +68,12 @@ hooks and permission/trust entries consistently select the native command.
 
 **Symptom**: No entries appearing in the intent's `audit/` shards after file writes, or no subagent completion logs.
 
-### Native channel versus copy-channel Bun
+### Native runtime versus source-generated Bun projection
 
-All 17 TypeScript hooks (`aidlc-record-human-turn.ts`, `aidlc-deliver-stage-rules.ts`, `aidlc-plan-approval-guard.ts`, `aidlc-state-transition-guard.ts`, `aidlc-reviewer-scope.ts`, `aidlc-review-freeze.ts`, `aidlc-write-audit-log.ts`, `aidlc-run-sensors.ts`, `aidlc-rebuild-stage-graph.ts`, `aidlc-fold-usage.ts`, `aidlc-log-subagent.ts`, `aidlc-continue-workflow.ts`, `aidlc-validate-state.ts`, `aidlc-sync-workflow-state.ts`, `aidlc-session-start.ts`, `aidlc-session-end.ts`, `aidlc-statusline.ts`) require `bun`. If `bun` is missing or not on PATH for non-interactive shells, these hooks will not fire.
+The source/development `dist/` projection runs its 17 TypeScript hooks through
+`bun`. Native installs and versioned release runtimes route those same hooks
+through `aidlc`. If a source-generated install cannot find Bun on the
+non-interactive PATH, its hooks will not fire.
 
 ```bash
 # macOS / Linux
@@ -84,7 +87,7 @@ npm install -g bun
 bun --version
 ```
 
-For a copy install, ensure `bun` is on the PATH inherited by the host, such as
+For a source-generated `dist/` install, ensure `bun` is on the PATH inherited by the host, such as
 `~/.zshenv` for zsh or `~/.bashrc` for bash and Git Bash, not only an
 interactive-shell file. On native Windows PowerShell, the system PATH entry
 set by `npm install -g bun` is sufficient.
@@ -102,9 +105,10 @@ On Claude Code, per-stage token usage and cost tracking is on by default: the fo
 Hooks are registered project-wide in the harness's native configuration. On
 Claude, verify that `.claude/settings.json` contains the expected `hooks`
 events and `statusLine`. For a native project, complete active workflows and
-run `aidlc config` to reconcile framework-owned wiring. For a copy install,
-re-copy the complete current `dist/<harness>/` projection while preserving
-project root integrations; do not patch one hook command in isolation.
+run `aidlc config` to reconcile framework-owned wiring. For a manual copy,
+replace the complete harness root from the same versioned
+`runtime/<harness>/` archive while preserving project root integrations; do
+not patch one hook command in isolation.
 
 ---
 
