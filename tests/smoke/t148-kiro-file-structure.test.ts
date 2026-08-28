@@ -344,20 +344,20 @@ describe("t148 dist/kiro file structure", () => {
   test("doctor accepts IDE shape and keeps CLI settings validation", () => {
     const run = (projectDir: string): string => {
       const tool = join(projectDir, ".kiro", "tools", "aidlc-utility.ts");
-      const result = spawnSync(process.execPath, [tool, "doctor", "--project-dir", projectDir], {
+      const result = spawnSync(process.execPath, [tool, "doctor", "--project-dir", projectDir, "--verbose"], {
         encoding: "utf-8",
         env: { ...process.env, AIDLC_HARNESS_DIR: ".kiro" },
       });
       return `${result.stdout ?? ""}${result.stderr ?? ""}`;
     };
     const ide = run(KIRO_IDE);
-    expect(ide).toContain("✓  agents/aidlc.{json,md} present (conductor wiring)");
+    expect(ide).toContain("ok    agents/aidlc.{json,md} present (conductor wiring)");
     expect(ide).not.toContain("settings/cli.json present");
 
     const cli = run(KIRO);
-    expect(cli).toContain("✓  agents/aidlc.{json,md} present (conductor wiring)");
+    expect(cli).toContain("ok    agents/aidlc.{json,md} present (conductor wiring)");
     expect(cli).toContain(
-      "✓  settings/cli.json present (workspace default-agent activation)",
+      "ok    settings/cli.json present (workspace default-agent activation)",
     );
   });
 
