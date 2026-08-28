@@ -1,6 +1,17 @@
 # Changelog
 All notable changes to this project will be documented in this file.
 
+## [2.7.0] - 2026-08-28
+
+AI-DLC 2.7.0 completes the native release path and makes generated projections reproducible build outputs instead of repository content. **Upgrade:** install or update the native release, run `aidlc config` between workflows to refresh each project, and change any source-checkout automation that consumed committed `dist/` files to run `bun scripts/package.ts` first.
+
+* The six-command public lifecycle is release-ready: `aidlc config`, `aidlc doctor`, `aidlc update`, `aidlc use`, `aidlc uninstall`, and `aidlc version`.
+* The authenticated installer is available from the release assets; after the README's provenance-verified download, the Unix installer one-liner is `sh "$tmp/install.sh"` (Windows uses the matching `install.ps1` asset).
+* **Breaking change:** `dist/` and `dist-release/`, including generated plugin projections, are no longer committed. CI jobs, tests, binary builds, release assembly, and source-checkout scripts must regenerate them before reading generated modules or files.
+* `bun scripts/package.ts --check` is now a generator-determinism guard: it builds copy, native, and plugin projections twice in independent temporary roots and reports the paths whose bytes differ. It no longer validates the freshness of local `dist*` trees.
+* Copy-channel users now take `runtime/<harness>/` from the versioned `aidlc-runtime.tar.gz` release asset; framework developers can still materialize equivalent ignored local trees with `bun scripts/package.ts`.
+* Release staging and lifecycle checks remain read-only and checksum-based. After the release-environment gate, the workflow attests the candidate and always creates a draft; a read-only job verifies the draft's actual checksums, online/offline provenance, and tag/version match before a separately gated promotion makes it public. Manual `draft=true` runs leave the verified draft unpublished. Fork and mirror shakedowns can set `AIDLC_RELEASE_REPOSITORY` and `AIDLC_RELEASE_WORKFLOW` to select an explicit provenance trust root without weakening the upstream defaults.
+
 ## [2.6.19] - 2026-08-20
 
 AI-DLC now ships a native, transactional install and lifecycle channel alongside the existing Bun copy channel, with a six-command public CLI, guided configuration, retained-version update/use flows, and release provenance controls. **Upgrade:** finish or park active workflows, install the native release or refresh your generated `dist/<harness>/` projection, then run `aidlc config` in each project.
