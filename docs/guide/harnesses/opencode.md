@@ -32,7 +32,7 @@ script (top-level dispatch, `process.exit`) crashes the session
   Check with `opencode --version`.
 - **bun** only when generating or running the source/development `dist/`
   projection. Native installs and versioned release runtimes dispatch through
-  the self-contained `aidlc` executable.
+  the installed `aidlc` executable.
 - **A model provider** — the shipped project `opencode.json` pins no session
   model; your global opencode config supplies it. Tiered personas pin
   `amazon-bedrock/global.anthropic.claude-sonnet-4-6` — override per agent in

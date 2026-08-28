@@ -288,7 +288,7 @@ resolution uses the name to distinguish shared engine directories and
 tree. The source/development channel under `dist/` invokes the generated TypeScript
 dispatcher through Bun. The release channel under `dist-release/` routes
 hooks, generated commands, adapters, and host trust entries through the
-self-contained `aidlc` dispatcher. Native-only root integrations, such as host
+native `aidlc` dispatcher. Native-only root integrations, such as host
 trust seeds, are added only to the release projection. Neither root is
 committed. `package.ts --check` builds the complete projection set twice in
 independent temporary roots and byte-compares those results. CI, tests, binary

@@ -1366,6 +1366,83 @@ describe("t244 Windows and completion release surfaces", () => {
     expect(script).toContain("AIDLC_RELEASE_WORKFLOW");
     expect(script).toContain("AIDLC_GH_BIN");
     expect(script).toContain('"$GH_BIN" attestation verify');
+    expect(script).toContain("is_musl_linux()");
+    expect(script).toContain("/lib/ld-musl-*.so.1");
+    expect(script).toContain("command -v apk >/dev/null 2>&1");
+    expect(script).toContain("apk add libgcc libstdc++");
+    expect(script).toContain('2>"$TMP/apply.err"');
+    expect(script).not.toMatch(/^\s*apk add\b/m);
+  });
+
+  test("Unix installer turns Alpine musl loader failures into the canonical remediation", () => {
+    if (process.platform !== "linux" || process.getuid?.() === 0) return;
+    const root = temp("aidlc-t244-musl-installer-");
+    const release = join(root, "release");
+    const fakeBin = join(root, "fake-bin");
+    const home = join(root, "home");
+    mkdirSync(release, { recursive: true });
+    mkdirSync(fakeBin, { recursive: true });
+    mkdirSync(home, { recursive: true });
+
+    writeFileSync(
+      join(fakeBin, "ldd"),
+      "#!/bin/sh\nprintf 'musl libc\\n'\n",
+      { mode: 0o755 },
+    );
+    const apkMarker = join(root, "apk-executed");
+    writeFileSync(
+      join(fakeBin, "apk"),
+      "#!/bin/sh\nprintf 'executed\\n' > \"$AIDLC_APK_MARKER\"\nexit 99\n",
+      { mode: 0o755 },
+    );
+    const target = process.arch === "arm64" ? "linux-arm64-musl" : "linux-x64-musl";
+    const binaryName = `aidlc-${target}`;
+    writeFileSync(
+      join(release, binaryName),
+      "#!/bin/sh\nprintf 'Error loading shared library libstdc++.so.6: No such file or directory\\n' >&2\nexit 127\n",
+      { mode: 0o755 },
+    );
+    writeFileSync(join(release, "version.json"), `{"version":"${AIDLC_VERSION}"}\n`);
+    writeFileSync(join(release, "aidlc-runtime.tar.gz"), "runtime\n");
+    cpSync(INSTALL_SH, join(release, "install.sh"));
+    const assets = [
+      "version.json",
+      binaryName,
+      "aidlc-runtime.tar.gz",
+      "install.sh",
+    ];
+    writeFileSync(
+      join(release, "checksums.txt"),
+      `${assets.map((name) => {
+        const digest = createHash("sha256")
+          .update(readFileSync(join(release, name)))
+          .digest("hex");
+        return `${digest}  ${name}`;
+      }).join("\n")}\n`,
+    );
+
+    const result = spawnSync("sh", [
+      INSTALL_SH,
+      "--from",
+      release,
+      "--offline",
+      "--quiet",
+    ], {
+      cwd: root,
+      encoding: "utf-8",
+      env: {
+        ...process.env,
+        HOME: home,
+        PATH: `${fakeBin}:${process.env.PATH ?? ""}`,
+        AIDLC_APK_MARKER: apkMarker,
+        AIDLC_INSTALL_ROOT: join(root, "install"),
+        AIDLC_BIN_DIR: join(root, "bin"),
+      },
+    });
+    expect(result.status, `${result.stdout}${result.stderr}`).toBe(1);
+    expect(result.stdout).toBe("apk add libgcc libstdc++\n");
+    expect(result.stderr).toBe("");
+    expect(existsSync(apkMarker)).toBe(false);
   });
 
   test("release workflow keeps actions pinned, lints installers, and regenerates before consumers", () => {
@@ -1378,6 +1455,7 @@ describe("t244 Windows and completion release surfaces", () => {
     };
     expect(parsed.permissions).toEqual({ contents: "read" });
     expect(parsed.jobs["native-smoke"].strategy?.["fail-fast"]).toBe(false);
+    expect(parsed.jobs["musl-smoke"].strategy?.["fail-fast"]).toBe(false);
     expect(workflow).toContain("name: Authorize immutable release tag");
     expect(workflow).toContain("git merge-base --is-ancestor");
     expect(workflow).toContain(
@@ -1434,6 +1512,14 @@ describe("t244 Windows and completion release surfaces", () => {
     expect(stageRelease).toContain(regen);
     expect(stageRelease.indexOf(regen))
       .toBeLessThan(stageRelease.indexOf("bun scripts/package-release.ts"));
+    const muslSmoke = workflowJob(workflow, "musl-smoke");
+    expect(muslSmoke).toContain("bun-linux-x64-musl");
+    expect(muslSmoke).toContain("bun-linux-arm64-musl");
+    expect(muslSmoke).toContain('-v "$PWD:/work:ro"');
+    expect(muslSmoke).toContain(
+      `alpine:3.20 sh -c "apk add libgcc libstdc++ >/dev/null && ` +
+        `/work/build/binaries/\${TARGET_DIR}/aidlc version"`,
+    );
   });
 
   test("release MUST 1: only publish can sign and stage-release has no provenance bundle", () => {
@@ -1463,6 +1549,21 @@ describe("t244 Windows and completion release surfaces", () => {
     expect(windows).toContain("checksums.txt");
     expect(windows).toContain("Get-FileHash -Algorithm SHA256");
     expect(windows).toContain("install.ps1 -From $releaseRoot -Offline");
+    expect(windows).toContain("$deadline = [DateTime]::UtcNow.AddSeconds(60)");
+    expect(windows).toContain("$commandExists = Test-Path -LiteralPath $command");
+    expect(windows).toContain(
+      "$rootExists = Test-Path -LiteralPath $env:AIDLC_INSTALL_ROOT",
+    );
+    expect(windows).toContain(
+      "if (-not $commandExists -and -not $rootExists) { break }",
+    );
+    expect(windows).toContain(
+      "if (Test-Path -LiteralPath $command) { throw 'aidlc.cmd survived uninstall' }",
+    );
+    expect(windows).toContain(
+      "if (Test-Path -LiteralPath $env:AIDLC_INSTALL_ROOT) { " +
+        "throw 'install root survived purge uninstall' }",
+    );
     expect(unix).toContain("sha256sum -c checksums.txt");
     expect(unix).toContain("shasum -a 256 -c checksums.txt");
     expect(unix).toContain('install.sh" --from "$release" --offline');

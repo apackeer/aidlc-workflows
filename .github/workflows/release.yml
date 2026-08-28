@@ -148,6 +148,7 @@ jobs:
   musl-smoke:
     needs: build
     strategy:
+      fail-fast: false
       matrix:
         include:
           - runner: ubuntu-latest
@@ -165,7 +166,7 @@ jobs:
       - run: chmod +x "build/binaries/${TARGET_DIR}/aidlc"
         env:
           TARGET_DIR: ${{ matrix.directory }}
-      - run: docker run --rm -v "$PWD:/work:ro" alpine:3.20 "/work/build/binaries/${TARGET_DIR}/aidlc" version
+      - run: docker run --rm -v "$PWD:/work:ro" alpine:3.20 sh -c "apk add libgcc libstdc++ >/dev/null && /work/build/binaries/${TARGET_DIR}/aidlc version"
         env:
           TARGET_DIR: ${{ matrix.directory }}
 
@@ -238,7 +239,11 @@ jobs:
           }
           & $command uninstall --purge --yes --quiet
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-          for ($i = 0; $i -lt 100 -and (Test-Path -LiteralPath $command); $i++) {
+          $deadline = [DateTime]::UtcNow.AddSeconds(60)
+          while ([DateTime]::UtcNow -lt $deadline) {
+            $commandExists = Test-Path -LiteralPath $command
+            $rootExists = Test-Path -LiteralPath $env:AIDLC_INSTALL_ROOT
+            if (-not $commandExists -and -not $rootExists) { break }
             Start-Sleep -Milliseconds 100
           }
           if (Test-Path -LiteralPath $command) { throw 'aidlc.cmd survived uninstall' }

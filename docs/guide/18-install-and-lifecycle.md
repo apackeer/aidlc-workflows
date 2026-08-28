@@ -1,6 +1,6 @@
 # Install and Lifecycle
 
-The native release channel installs a self-contained `aidlc` command and one
+The native release channel installs an `aidlc` command and one
 or more harness runtimes. `aidlc config` then creates or refreshes a project from
 that local runtime. The installed command and config path do not require Bun or
 Node.js. The authenticated bootstrap requires GitHub CLI (`gh`) so the installer
@@ -23,6 +23,23 @@ Release assets cover:
 Install as the target user. The Unix installer refuses root; the Windows
 installer refuses an elevated Administrator session. Native installs are
 per-user and do not need `sudo`.
+
+Alpine Linux's musl asset follows Bun's own runtime contract: Bun's musl build,
+like Node.js, requires the system `libgcc` and `libstdc++` packages. Fully
+static Bun musl compile targets remain an upstream-tracked feature rather than
+an available target today. Install the prerequisites before running the
+installer or binary:
+
+```sh
+apk add libgcc libstdc++
+```
+
+This prerequisite applies to both x64 and arm64 Alpine systems. Installing the
+system packages may require administrator rights, but the AI-DLC install itself
+still runs as the target user. The installer detects the corresponding loader
+failure and prints the command above; it never runs `apk` or installs system
+packages. The upstream Bun tracking includes `oven-sh/bun#15829` and
+`oven-sh/bun#29681`.
 
 The installer includes `claude`, `kiro`, `kiro-ide`, `codex`, and `opencode`
 together:

@@ -1,7 +1,7 @@
 # CLI Commands
 
 AI-DLC has two user-facing command planes. Harness chat commands drive a
-workflow through `/aidlc` (or `$aidlc` on Codex); the self-contained native
+workflow through `/aidlc` (or `$aidlc` on Codex); the installed native
 `aidlc` command initializes projects and provides machine lifecycle,
 diagnostic and lifecycle routes.
 

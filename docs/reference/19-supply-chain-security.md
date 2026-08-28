@@ -230,9 +230,14 @@ schema.
   stored in the repository.
 - The release tag must be protected and must point to the reviewed
   release-prep commit. Tag protection is a required repository setting.
-- `alpine:3.20` remains tag-pinned for the musl smoke job. It mounts the
-  workspace read-only, executes an already-built binary only, and produces no
-  release bytes. Artifact-moving and source-fetching actions are SHA-pinned.
+- `alpine:3.20` remains tag-pinned for the musl smoke job. Each disposable
+  container installs the documented `libgcc` and `libstdc++` prerequisites
+  shared by Bun's and Node.js's musl builds, mounts the workspace read-only,
+  executes an already-built binary, and produces no release bytes. Fully
+  static Bun musl compile targets remain upstream-tracked rather than
+  available today. The matrix uses `fail-fast: false` so both musl
+  architectures report. Artifact-moving and source-fetching actions are
+  SHA-pinned.
 
 ## 7. Named ownership
 

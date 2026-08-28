@@ -256,11 +256,21 @@ case "$(uname -m)" in
   arm64|aarch64) ARCH=arm64 ;;
   *) usage "unsupported architecture: $(uname -m)" ;;
 esac
-TARGET="$OS-$ARCH"
-if [ "$OS" = "linux" ]; then
-  if ldd --version 2>&1 | grep -qi musl; then
-    TARGET="$TARGET-musl"
+
+is_musl_linux() {
+  if command -v ldd >/dev/null 2>&1 &&
+    ldd --version 2>&1 | grep -qi musl; then
+    return 0
   fi
+  for loader in /lib/ld-musl-*.so.1 /usr/lib/ld-musl-*.so.1; do
+    [ ! -e "$loader" ] || return 0
+  done
+  return 1
+}
+
+TARGET="$OS-$ARCH"
+if [ "$OS" = "linux" ] && is_musl_linux; then
+  TARGET="$TARGET-musl"
 fi
 
 umask 077
@@ -382,9 +392,24 @@ for asset in $ASSETS; do
 done
 
 chmod 755 "$TMP/$BINARY"
-"$TMP/$BINARY" system lifecycle install-apply --from "$TMP" --version "$VERSION" \
-  --quiet >"$TMP/apply.out" ||
-  fail 4 failed "$(sed -n '1p' "$TMP/apply.out")" "rerun the installer after correcting the reported release error"
+if ! "$TMP/$BINARY" system lifecycle install-apply --from "$TMP" --version "$VERSION" \
+  --quiet >"$TMP/apply.out" 2>"$TMP/apply.err"; then
+  case "$TARGET" in
+    linux-*-musl)
+      if command -v apk >/dev/null 2>&1 &&
+        grep -Eq 'libstdc\+\+\.so\.6|libgcc_s\.so\.1' "$TMP/apply.err"; then
+        fail 1 failed \
+          "Alpine Linux is missing the C++ runtime libraries required by AI-DLC" \
+          "apk add libgcc libstdc++"
+      fi
+      ;;
+  esac
+  apply_message=$(sed -n '1p' "$TMP/apply.out")
+  [ -n "$apply_message" ] || apply_message=$(sed -n '1p' "$TMP/apply.err")
+  [ -n "$apply_message" ] || apply_message="verified installer binary failed"
+  fail 4 failed "$apply_message" \
+    "rerun the installer after correcting the reported release error"
+fi
 
 profile_message=
 if [ -n "$PROFILE" ]; then

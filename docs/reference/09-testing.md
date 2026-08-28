@@ -54,8 +54,12 @@ trees. Binary and release packagers perform their own regeneration and
 determinism checks before reading `dist-release/`.
 
 Release CI adds native smoke on Linux, macOS, and Windows, builds the seven
-target artifacts on their native runner architectures, executes musl probes,
-then stages one checksum-verified candidate. Unix and Windows lifecycle
+target artifacts on their native runner architectures, and executes both musl
+probes in disposable Alpine containers after installing the documented
+`libgcc` and `libstdc++` runtime prerequisites shared by Bun and Node.js. The
+musl matrix uses
+`fail-fast: false` so both architectures report before CI stages one
+checksum-verified candidate. Unix and Windows lifecycle
 journeys consume those bytes without signing permissions. After the protected
 gate, the workflow attests them, creates a draft, verifies the draft's actual
 assets through online and offline provenance paths, and only then promotes it.
@@ -130,7 +134,7 @@ The test suite runs on macOS, Linux, and Windows through the native Bun runner:
 bun tests/run-tests.ts [--ci | --all --debug -P 8]
 ```
 
-`bash tests/run-tests.sh ...` remains as a POSIX compatibility wrapper and delegates to the same TypeScript runner. Repository tests and copy-channel hooks/tools require `bun`; native release projections invoke hooks/tools through the self-contained `aidlc` binary. Bash is not the primary runner substrate.
+`bash tests/run-tests.sh ...` remains as a POSIX compatibility wrapper and delegates to the same TypeScript runner. Repository tests and copy-channel hooks/tools require `bun`; native release projections invoke hooks/tools through the installed `aidlc` binary. Bash is not the primary runner substrate.
 
 **Portability constraints baked into the suite:**
 

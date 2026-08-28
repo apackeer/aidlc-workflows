@@ -66,9 +66,15 @@ Ad-hoc AI coding works until the project gets real. Then context drifts between 
 The deterministic engine — state machine, audit log, and the referee that coordinates parallel agents — is byte-identical across every harness; only the shell differs. Each section in the [Quick Start](#quick-start) installs one harness end to end, and its guide above goes deeper on prerequisites and differences.
 
 > [!NOTE]
-> Release assets support self-contained macOS, Linux, and Windows installs.
+> Release assets support native macOS, Linux, and Windows installs.
 > The installer installs the native `aidlc` command and all harness runtimes;
 > `aidlc config --harness <name>` safely initializes or refreshes a project.
+> Alpine Linux requires the same C++ runtime packages as Bun's and Node.js's
+> own musl builds before using the AI-DLC musl asset:
+> `apk add libgcc libstdc++`. Fully static Bun musl compile targets remain an
+> upstream-tracked feature rather than an available target today. The installer
+> reports the prerequisite command when it detects the missing loader
+> dependencies; it never installs system packages.
 > Manual-copy users can take `runtime/<harness>/` from the versioned
 > `aidlc-runtime.tar.gz` release asset; those trees use the matching native
 > `aidlc` command. Only source-generated local `dist/` projections require Bun.
@@ -84,7 +90,7 @@ This release works better with `Claude Opus 4.8`. We are sharpening it for previ
 
 ### Install AI-DLC
 
-The native installer is the recommended path. It installs one self-contained
+The native installer is the recommended path. It installs one native
 `aidlc` command plus every harness runtime; Bun and Node.js are not required.
 The authenticated bootstrap requires GitHub CLI (`gh`).
 
