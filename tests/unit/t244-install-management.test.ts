@@ -1322,6 +1322,44 @@ describe("t244 Windows and completion release surfaces", () => {
     );
   }, process.platform === "win32" ? 30_000 : 5_000);
 
+  test("PowerShell installer keeps analyzer suppressions narrow and helper calls named", () => {
+    const script = readFileSync(INSTALL_PS1, "utf-8");
+    expect(script).toContain("[switch]$Yes");
+    expect(script).toContain("[switch]$NoColor");
+    expect(script).toContain(
+      "'PSReviewUnusedParameter',\n  'Yes',\n" +
+        "  Justification = 'Public parity flag; the installer is non-interactive and never prompts.'",
+    );
+    expect(script).toContain(
+      "'PSReviewUnusedParameter',\n  'NoColor',\n" +
+        "  Justification = 'Public parity flag; this installer emits no ANSI color.'",
+    );
+    expect(script).toContain(
+      "'PSAvoidUsingWriteHost',\n  '',\n" +
+        "  Justification = 'The PATH instruction is part of the pinned human-mode stdout contract under PowerShell 5.1.'",
+    );
+    expect(script).toContain(
+      "'PSAvoidUsingWriteHost',\n    '',\n" +
+        "    Justification = 'PASS output is part of the pinned human-mode stdout contract under PowerShell 5.1.'",
+    );
+    expect(script.match(/'PSAvoidUsingWriteHost'/g)).toHaveLength(2);
+    expect(script).toContain(
+      "'PSUseShouldProcessForStateChangingFunctions',\n    '',\n" +
+        "    Justification = 'This helper only emits the terminal result and exits; it performs no state mutation.'",
+    );
+    expect(script.match(/^\s*Write-Host\b/gm)).toHaveLength(2);
+    for (const helper of [
+      "Stop-Install",
+      "Write-Result",
+      "Get-ReleaseFile",
+      "Get-ExpectedHash",
+    ]) {
+      expect(script).not.toMatch(
+        new RegExp(`^\\s*${helper}\\s+(?!-|\`\\s*$)`, "m"),
+      );
+    }
+  });
+
   test("Unix installer supports explicit provenance trust roots under a stripped PATH", () => {
     const script = readFileSync(INSTALL_SH, "utf-8");
     expect(script).toContain("AIDLC_RELEASE_REPOSITORY");

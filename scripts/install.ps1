@@ -1,3 +1,18 @@
+[Diagnostics.CodeAnalysis.SuppressMessageAttribute(
+  'PSReviewUnusedParameter',
+  'Yes',
+  Justification = 'Public parity flag; the installer is non-interactive and never prompts.'
+)]
+[Diagnostics.CodeAnalysis.SuppressMessageAttribute(
+  'PSReviewUnusedParameter',
+  'NoColor',
+  Justification = 'Public parity flag; this installer emits no ANSI color.'
+)]
+[Diagnostics.CodeAnalysis.SuppressMessageAttribute(
+  'PSAvoidUsingWriteHost',
+  '',
+  Justification = 'The PATH instruction is part of the pinned human-mode stdout contract under PowerShell 5.1.'
+)]
 [CmdletBinding(PositionalBinding = $false)]
 param(
   [Parameter()]
@@ -50,6 +65,11 @@ $releaseWorkflow = if ($env:AIDLC_RELEASE_WORKFLOW) {
 }
 
 function Write-Result {
+  [Diagnostics.CodeAnalysis.SuppressMessageAttribute(
+    'PSAvoidUsingWriteHost',
+    '',
+    Justification = 'PASS output is part of the pinned human-mode stdout contract under PowerShell 5.1.'
+  )]
   param(
     [bool]$Ok,
     [int]$Code,
@@ -79,13 +99,19 @@ function Write-Result {
 }
 
 function Stop-Install {
+  [Diagnostics.CodeAnalysis.SuppressMessageAttribute(
+    'PSUseShouldProcessForStateChangingFunctions',
+    '',
+    Justification = 'This helper only emits the terminal result and exits; it performs no state mutation.'
+  )]
   param(
     [int]$Code,
     [string]$Status,
     [string]$Message,
     [string]$Remediation = ''
   )
-  Write-Result $false $Code $Status $Message $Remediation
+  Write-Result -Ok $false -Code $Code -Status $Status -Message $Message `
+    -Remediation $Remediation
   exit $Code
 }
 
@@ -101,17 +127,20 @@ function Get-ReleaseFile {
     $arguments += @('--output', $Output, $Url)
     & $curl.Source @arguments
     if ($LASTEXITCODE -ne 0) {
-      Stop-Install 3 'unavailable' 'download failed' 'check the release URL, proxy, and CA bundle'
+      Stop-Install -Code 3 -Status 'unavailable' -Message 'download failed' `
+        -Remediation 'check the release URL, proxy, and CA bundle'
     }
     return
   }
   if ($CaBundle) {
-    Stop-Install 1 'failed' 'curl.exe is required when --CaBundle is used'
+    Stop-Install -Code 1 -Status 'failed' `
+      -Message 'curl.exe is required when --CaBundle is used'
   }
   try {
     Invoke-WebRequest -UseBasicParsing -Uri $Url -OutFile $Output
   } catch {
-    Stop-Install 3 'unavailable' 'download failed' 'check the release URL and proxy'
+    Stop-Install -Code 3 -Status 'unavailable' -Message 'download failed' `
+      -Remediation 'check the release URL and proxy'
   }
 }
 
@@ -122,7 +151,8 @@ function Get-ExpectedHash {
     $_ -match "^([a-f0-9]{64})  $escaped$"
   })
   if ($rows.Count -ne 1) {
-    Stop-Install 4 'failed' "checksums.txt has no unique row for $Name"
+    Stop-Install -Code 4 -Status 'failed' `
+      -Message "checksums.txt has no unique row for $Name"
   }
   return ($rows[0] -split '  ', 2)[0]
 }
@@ -132,12 +162,14 @@ function Confirm-NotAdministrator {
   $identity = [Security.Principal.WindowsIdentity]::GetCurrent()
   $principal = [Security.Principal.WindowsPrincipal]::new($identity)
   if ($principal.IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)) {
-    Stop-Install 4 'failed' 'refusing an Administrator install; run as the target user'
+    Stop-Install -Code 4 -Status 'failed' `
+      -Message 'refusing an Administrator install; run as the target user'
   }
 }
 
 if ($LiteralArguments) {
-  Stop-Install 2 'usage' "unknown argument: $($LiteralArguments[0])"
+  Stop-Install -Code 2 -Status 'usage' `
+    -Message "unknown argument: $($LiteralArguments[0])"
 }
 
 Confirm-NotAdministrator
@@ -146,34 +178,39 @@ if ($env:AIDLC_OFFLINE -eq '1') {
   $Offline = $true
 }
 if ($Offline -and -not $From) {
-  Stop-Install 3 'unavailable' '--Offline requires --From <release-directory>'
+  Stop-Install -Code 3 -Status 'unavailable' `
+    -Message '--Offline requires --From <release-directory>'
 }
 if ($From) {
   $Offline = $true
   $From = [IO.Path]::GetFullPath($From)
   if (-not (Test-Path -LiteralPath $From -PathType Container)) {
-    Stop-Install 2 'usage' "offline source is not a directory: $From"
+    Stop-Install -Code 2 -Status 'usage' `
+      -Message "offline source is not a directory: $From"
   }
   if (-not (Test-Path -LiteralPath (Join-Path $From 'install.ps1') -PathType Leaf)) {
-    Stop-Install 4 'failed' 'offline source is missing install.ps1'
+    Stop-Install -Code 4 -Status 'failed' `
+      -Message 'offline source is missing install.ps1'
   }
 }
 if (-not $From) {
   try {
     $releaseUri = [Uri]::new($ReleaseBaseUrl)
   } catch {
-    Stop-Install 2 'usage' 'release URL is invalid'
+    Stop-Install -Code 2 -Status 'usage' -Message 'release URL is invalid'
   }
   if ($releaseUri.UserInfo -or $releaseUri.Query -or $releaseUri.Fragment) {
-    Stop-Install 4 'failed' 'release URL must not include credentials, a query, or a fragment'
+    Stop-Install -Code 4 -Status 'failed' `
+      -Message 'release URL must not include credentials, a query, or a fragment'
   }
   if ($releaseUri.Scheme -ne 'https' -and
     -not ($releaseUri.Scheme -eq 'http' -and $releaseUri.IsLoopback)) {
-    Stop-Install 4 'failed' 'release URL must use HTTPS'
+    Stop-Install -Code 4 -Status 'failed' -Message 'release URL must use HTTPS'
   }
 }
 if ($CaBundle -and -not [IO.Path]::IsPathRooted($CaBundle)) {
-  Stop-Install 2 'usage' '--CaBundle must be an absolute path'
+  Stop-Install -Code 2 -Status 'usage' `
+    -Message '--CaBundle must be an absolute path'
 }
 
 $installRoot = if ($env:AIDLC_INSTALL_ROOT) {
@@ -194,7 +231,9 @@ if (-not $env:AIDLC_BIN_DIR -and $existingAidlc -and
     [IO.Path]::GetFullPath($command),
     [StringComparison]::OrdinalIgnoreCase
   )) {
-  Stop-Install 4 'failed' "existing aidlc at $($existingAidlc.Source) is outside the native install destination" 'use its package manager, or set AIDLC_BIN_DIR to an explicit empty directory'
+  Stop-Install -Code 4 -Status 'failed' `
+    -Message "existing aidlc at $($existingAidlc.Source) is outside the native install destination" `
+    -Remediation 'use its package manager, or set AIDLC_BIN_DIR to an explicit empty directory'
 }
 $temporary = Join-Path ([IO.Path]::GetTempPath()) "aidlc-install-$PID-$([Guid]::NewGuid().ToString('N'))"
 [IO.Directory]::CreateDirectory($temporary) | Out-Null
@@ -211,11 +250,14 @@ try {
     if ($From) {
       $source = Join-Path $From $name
       if (-not (Test-Path -LiteralPath $source -PathType Leaf)) {
-        Stop-Install 4 'failed' "offline source is missing $name"
+        Stop-Install -Code 4 -Status 'failed' `
+          -Message "offline source is missing $name"
       }
       Copy-Item -LiteralPath $source -Destination $output
     } else {
-      Get-ReleaseFile "$($ReleaseBaseUrl.TrimEnd('/'))/$metadataSegment/$name" $output
+      Get-ReleaseFile `
+        -Url "$($ReleaseBaseUrl.TrimEnd('/'))/$metadataSegment/$name" `
+        -Output $output
     }
   }
 
@@ -223,18 +265,22 @@ try {
   $checksumsPath = Join-Path $temporary 'checksums.txt'
   foreach ($metadataPath in @($manifestPath, $checksumsPath)) {
     if ((Get-Item -LiteralPath $metadataPath).Length -gt 1MB) {
-      Stop-Install 4 'failed' "$([IO.Path]::GetFileName($metadataPath)) exceeds the 1 MiB metadata limit"
+      Stop-Install -Code 4 -Status 'failed' `
+        -Message "$([IO.Path]::GetFileName($metadataPath)) exceeds the 1 MiB metadata limit"
     }
   }
   $manifest = Get-Content -Raw -LiteralPath $manifestPath | ConvertFrom-Json
   if ($manifest.schemaVersion -ne 1 -or $manifest.version -notmatch '^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$') {
-    Stop-Install 4 'failed' 'version.json has an invalid schema or version'
+    Stop-Install -Code 4 -Status 'failed' `
+      -Message 'version.json has an invalid schema or version'
   }
   if (-not $From) {
     $gh = Get-Command gh -CommandType Application -ErrorAction SilentlyContinue |
       Select-Object -First 1
     if (-not $gh) {
-      Stop-Install 1 'failed' 'GitHub CLI is required to verify release provenance' 'install gh, then rerun this installer'
+      Stop-Install -Code 1 -Status 'failed' `
+        -Message 'GitHub CLI is required to verify release provenance' `
+        -Remediation 'install gh, then rerun this installer'
     }
     $bundle = Join-Path $temporary 'aidlc-release.intoto.jsonl'
     & $gh.Source attestation verify $checksumsPath `
@@ -243,25 +289,32 @@ try {
       --signer-workflow $releaseWorkflow `
       --source-ref "refs/tags/v$($manifest.version)" | Out-Null
     if ($LASTEXITCODE -ne 0) {
-      Stop-Install 4 'failed' 'release provenance verification failed' "obtain the release from $releaseRepository"
+      Stop-Install -Code 4 -Status 'failed' `
+        -Message 'release provenance verification failed' `
+        -Remediation "obtain the release from $releaseRepository"
     }
   }
   $manifestHash = (Get-FileHash -Algorithm SHA256 -LiteralPath $manifestPath).Hash.ToLowerInvariant()
-  if ($manifestHash -ne (Get-ExpectedHash $checksumsPath 'version.json')) {
-    Stop-Install 4 'failed' 'checksum mismatch for version.json'
+  if ($manifestHash -ne (Get-ExpectedHash -Checksums $checksumsPath -Name 'version.json')) {
+    Stop-Install -Code 4 -Status 'failed' `
+      -Message 'checksum mismatch for version.json'
   }
   $verifiedInstaller = Join-Path $temporary 'install.ps1'
   if ($From) {
     Copy-Item -LiteralPath (Join-Path $From 'install.ps1') -Destination $verifiedInstaller
   } else {
-    Get-ReleaseFile "$($ReleaseBaseUrl.TrimEnd('/'))/$metadataSegment/install.ps1" $verifiedInstaller
+    Get-ReleaseFile `
+      -Url "$($ReleaseBaseUrl.TrimEnd('/'))/$metadataSegment/install.ps1" `
+      -Output $verifiedInstaller
   }
   $installerHash = (Get-FileHash -Algorithm SHA256 -LiteralPath $verifiedInstaller).Hash.ToLowerInvariant()
-  if ($installerHash -ne (Get-ExpectedHash $checksumsPath 'install.ps1')) {
-    Stop-Install 4 'failed' 'checksum mismatch for install.ps1'
+  if ($installerHash -ne (Get-ExpectedHash -Checksums $checksumsPath -Name 'install.ps1')) {
+    Stop-Install -Code 4 -Status 'failed' `
+      -Message 'checksum mismatch for install.ps1'
   }
   if ($Version -and $manifest.version -ne $Version) {
-    Stop-Install 4 'failed' "release endpoint returned $($manifest.version), not requested $Version"
+    Stop-Install -Code 4 -Status 'failed' `
+      -Message "release endpoint returned $($manifest.version), not requested $Version"
   }
   $Version = $manifest.version
 
@@ -269,28 +322,33 @@ try {
   foreach ($name in $assets) {
     $asset = @($manifest.assets | Where-Object { $_.name -eq $name })
     if ($asset.Count -ne 1) {
-      Stop-Install 3 'unavailable' "release does not provide $name"
+      Stop-Install -Code 3 -Status 'unavailable' `
+        -Message "release does not provide $name"
     }
-    $expected = Get-ExpectedHash $checksumsPath $name
+    $expected = Get-ExpectedHash -Checksums $checksumsPath -Name $name
     if ($asset[0].sha256 -ne $expected) {
-      Stop-Install 4 'failed' "$name checksum metadata does not match version.json"
+      Stop-Install -Code 4 -Status 'failed' `
+        -Message "$name checksum metadata does not match version.json"
     }
     $output = Join-Path $temporary $name
     if ($From) {
       $source = Join-Path $From $name
       if (-not (Test-Path -LiteralPath $source -PathType Leaf)) {
-        Stop-Install 4 'failed' "offline source is missing $name"
+        Stop-Install -Code 4 -Status 'failed' `
+          -Message "offline source is missing $name"
       }
       Copy-Item -LiteralPath $source -Destination $output
     } else {
-      Get-ReleaseFile "$($ReleaseBaseUrl.TrimEnd('/'))/download/v$Version/$name" $output
+      Get-ReleaseFile `
+        -Url "$($ReleaseBaseUrl.TrimEnd('/'))/download/v$Version/$name" `
+        -Output $output
     }
     $actual = (Get-FileHash -Algorithm SHA256 -LiteralPath $output).Hash.ToLowerInvariant()
     if ($actual -ne $expected) {
-      Stop-Install 4 'failed' "checksum mismatch for $name"
+      Stop-Install -Code 4 -Status 'failed' -Message "checksum mismatch for $name"
     }
     if ((Get-Item -LiteralPath $output).Length -ne [long]$asset[0].bytes) {
-      Stop-Install 4 'failed' "size mismatch for $name"
+      Stop-Install -Code 4 -Status 'failed' -Message "size mismatch for $name"
     }
     Unblock-File -LiteralPath $output -ErrorAction SilentlyContinue
   }
@@ -302,10 +360,12 @@ try {
   try {
     $applyResult = $applyOutput | ConvertFrom-Json
   } catch {
-    Stop-Install 1 'failed' 'verified installer binary returned an invalid result'
+    Stop-Install -Code 1 -Status 'failed' `
+      -Message 'verified installer binary returned an invalid result'
   }
   if ($applyCode -ne 0) {
-    Stop-Install $applyCode $applyResult.status $applyResult.message $applyResult.remediation
+    Stop-Install -Code $applyCode -Status $applyResult.status `
+      -Message $applyResult.message -Remediation $applyResult.remediation
   }
 
   $pathCommand = ''
@@ -325,7 +385,8 @@ try {
         [IO.Path]::GetFullPath($command),
         [StringComparison]::OrdinalIgnoreCase
       )) {
-      Stop-Install 4 'failed' 'installed aidlc is not resolvable after applying the PATH update'
+      Stop-Install -Code 4 -Status 'failed' `
+        -Message 'installed aidlc is not resolvable after applying the PATH update'
     }
   }
   if ($pathCommand -and -not $Quiet -and -not $Json) {
@@ -333,9 +394,10 @@ try {
   }
   $message = "installed AI-DLC $Version; command: $command"
   if ($pathCommand -and $Quiet) { $message = "$message; run $pathCommand in a new session" }
-  Write-Result $true 0 'ok' $message
+  Write-Result -Ok $true -Code 0 -Status 'ok' -Message $message
 } catch {
-  Stop-Install 4 'failed' "installer validation failed: $($_.Exception.Message)"
+  Stop-Install -Code 4 -Status 'failed' `
+    -Message "installer validation failed: $($_.Exception.Message)"
 } finally {
   Remove-Item -LiteralPath $temporary -Recurse -Force -ErrorAction SilentlyContinue
 }
