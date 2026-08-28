@@ -9,7 +9,7 @@
 // `.codex` per tree. A raw `.claude/<subdir>` (or `.kiro/` / `.codex/`) path
 // literal that slips into a core .md would ship verbatim into EVERY harness's
 // dist — a Claude path leaking into the Kiro and Codex trees. The dist-level
-// byte-parity gate (t145) catches a literal that the anchored migration WOULD
+// generated-projection gates catch a literal that the anchored migration WOULD
 // have tokenized; this test guards the other direction — a NEW core edit that
 // hardcodes a harness path instead of using the token.
 //

@@ -27,7 +27,7 @@
 // with JSON.parse is itself a STRONGER restatement of test 1 ("valid JSON"):
 // JSON.parse throws on malformed JSON exactly as `jq empty` failed.
 //
-// FIXTURE DISCIPLINE: the input is the REAL committed shipped file at
+// FIXTURE DISCIPLINE: the input is the REAL generated shipped file at
 // dist/claude/.claude/settings.json, read-only, resolved through AIDLC_SRC from
 // tests/harness/fixtures.ts (the same anchor the .sh's $SETTINGS pointed at —
 // fixtures resolves AIDLC_SRC to <repo>/dist/claude/.claude). NOTHING is written;
@@ -95,7 +95,7 @@ describe("settings.json — JSON validity [.sh test 1]", () => {
 });
 
 describe("permissions.allow — pre-approved tool list [.sh tests 2-9]", () => {
-  // The committed dist/ copy projection grants only its harness-local Bun
+  // The generated dist/ copy projection grants only its harness-local Bun
   // dispatcher instead of unrestricted Bash or a native binary dependency.
   const allow = settings.permissions?.allow ?? [];
   const REQUIRED_TOOLS = [

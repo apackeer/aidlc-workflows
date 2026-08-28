@@ -1,11 +1,10 @@
-// t248-copilot-packaging: dist/copilot parity + drift guard + shell shape.
+// t248-copilot-packaging: dist/copilot determinism + shell shape.
 //
 // covers: file:tools/aidlc-lib.ts
 //
 // WHAT. Four contracts land here:
-//   (1) The committed dist/copilot tree is byte-identical to what
-//       `bun scripts/package.ts copilot --check` regenerates (drift guard,
-//       same UX as codex's t150 test 1 / opencode's t240 test 1).
+//   (1) `bun scripts/package.ts copilot --check` produces byte-identical clean
+//       builds (same UX as codex's t150 / opencode's t240 test 1).
 //   (2) Core parity: every .ts under dist/copilot/.aidlc/{tools,hooks}/
 //       except the authored adapter is BYTE-IDENTICAL to its dist/claude
 //       source (the architecture-B invariant: the packager may transform
@@ -58,15 +57,17 @@ function* walk(dir: string): Generator<string> {
 }
 
 describe("t248 dist/copilot packaging parity + shell shape", () => {
-  test("1: committed dist/copilot matches the packaging script (drift guard)", () => {
+  test("1: copilot package generation is deterministic", () => {
     const r = spawnSync("bun", [PACKAGE_SCRIPT, "copilot", "--check"], {
       encoding: "utf-8",
       cwd: REPO_ROOT,
       timeout: 180_000,
     });
-    expect(r.stdout + r.stderr).toContain("--check: OK");
+    expect(r.stdout + r.stderr).toContain(
+      "deterministic across two independent build(s) for copilot",
+    );
     expect(r.status).toBe(0);
-  });
+  }, 60_000);
 
   test("2: engine .ts files differ only at declared projection tokens", () => {
     expect(existsSync(ENGINE)).toBe(true);

@@ -423,8 +423,8 @@ describe("t55 — test-suite metadata drift (migrated from t55-test-suite-drift.
     ];
     const pathHits = grepHits(
       [
-        // Authorship moved from dist/claude/.claude to core/ + harness/ (dist-unified
-        // keystone); dist/ is now generated but still committed, so scan all three.
+        // Authorship moved from dist/claude/.claude to core/ + harness/
+        // (dist-unified keystone); scan the generated local projection too.
         join(REPO_ROOT, "core"),
         join(REPO_ROOT, "harness"),
         join(REPO_ROOT, "dist", "claude", ".claude"),

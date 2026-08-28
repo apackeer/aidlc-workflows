@@ -1,5 +1,6 @@
 ---
 slug: approval-handoff
+name: Approval & Handoff
 phase: ideation
 execution: ALWAYS
 condition: Always executes — compiles all Ideation artifacts into initiative brief for approval

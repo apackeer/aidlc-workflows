@@ -10,7 +10,7 @@
 // wiring beyond the include); only the pointer SEGMENT is rewritten in place, so
 // every other byte — hooks, prompt, model, sandbox, statusline — is preserved.
 //
-// MECHANISM. Copy the REAL committed dist surface for a harness into a temp tree
+// MECHANISM. Copy the REAL generated dist surface for a harness into a temp tree
 // (so we exercise the actual shipped shape, not a stub), set AIDLC_HARNESS_DIR to
 // pick that harness's branch, call repointHarnessIncludes, and assert the pointer
 // moved while the wiring survived. Zero LLM, fully deterministic.

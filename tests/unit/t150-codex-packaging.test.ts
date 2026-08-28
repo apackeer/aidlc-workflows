@@ -1,13 +1,10 @@
-// t150-codex-packaging: dist/codex parity + drift guard + trust-seed recipe.
+// t150-codex-packaging: dist/codex determinism + trust-seed recipe.
 //
 // covers: file:tools/aidlc-lib.ts
 //
 // WHAT. Three contracts land here:
-//   (1) The committed dist/codex tree is byte-identical to what
-//       `bun scripts/package.ts codex` regenerates from dist/claude/.claude
-//       (modulo the script's single sanctioned prefix-transform class).
-//       Drift fails with the regen command — same UX as aidlc-runner-gen
-//       check and kiro's t141.
+//   (1) `bun scripts/package.ts codex --check` produces byte-identical clean
+//       builds, including the single sanctioned prefix-transform class.
 //   (2) Core parity: every .ts under dist/codex/.codex/tools/ and the core
 //       hook bodies are BYTE-IDENTICAL to their dist/claude sources, except
 //       for aidlc-runtime-paths.ts's single projected invocation constant.
@@ -161,19 +158,21 @@ function runDoctorWithCodexVersion(version: string): {
   }
 }
 
-describe("t150 dist/codex packaging parity + drift guard", () => {
-  test("1: committed dist/codex matches the packaging script (drift guard)", () => {
+describe("t150 dist/codex packaging determinism + trust", () => {
+  test("1: codex package generation is deterministic", () => {
     const r = spawnSync("bun", [PACKAGE_SCRIPT, "codex", "--check"], {
       encoding: "utf-8",
       cwd: REPO_ROOT,
     });
     if (r.status !== 0) {
-      // Surface the script's own stale-file list — it names the fix.
+      // Surface the script's path-level mismatch list.
       console.error(r.stderr);
     }
     expect(r.status).toBe(0);
-    expect(r.stdout).toContain("in sync");
-  });
+    expect(r.stdout).toContain(
+      "deterministic across two independent build(s) for codex",
+    );
+  }, 60_000);
 
   test("2: packaged .ts files differ only at declared projection tokens", () => {
     // tools/ + hooks/ carry the deterministic core. The codex adapter

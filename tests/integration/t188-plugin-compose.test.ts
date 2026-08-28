@@ -108,7 +108,7 @@ describe("t188 plugin compose — emit + compose the contribution seam", () => {
     tmp = mkdtempSync(join(tmpdir(), "aidlc-t188-"));
 
     // 1. Build every manifest-discovered projection into tmp via the target-dir
-    //    seam. This exercises the real emitter without mutating committed dist.
+    //    seam. This exercises the real emitter without mutating local dist.
     for (const harness of HARNESS_MATRIX) {
       const built = join(tmp, "plugin", harness.name);
       buildPluginProjection(PLUGIN, harness.name, built);

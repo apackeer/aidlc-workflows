@@ -1,5 +1,6 @@
 ---
 slug: build-and-test
+name: Build and Test
 phase: construction
 execution: ALWAYS
 condition: Always executes once after all per-unit stages are finished.

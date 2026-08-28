@@ -1,5 +1,6 @@
 ---
 slug: state-init
+name: State Initialization
 phase: initialization
 execution: ALWAYS
 condition: Creates full populated state file and determines routing — auto-proceeds

@@ -169,11 +169,10 @@ export type HarnessManifest = {
    * `extractor_unavailable`, so this is an override, never a requirement.
    *
    * It has to be PACKAGER-owned rather than hand-edited: writeHarnessData()
-   * builds a FRESH object, and harness.json is committed and byte-diffed by
-   * `--check`, so a hand-added field both fails the drift guard and is erased on
-   * the next build. And a team needs its extractor choice COMMITTED so it travels
-   * to every clone, which rules out the runtime-written path too — that one
-   * targets a different, install-local file.
+   * builds a FRESH object, so a hand-added field is erased on the next build.
+   * A team needs its extractor choice authored in the repository so it reaches
+   * every generated release, which rules out the runtime-written path too —
+   * that one targets a different, install-local file.
    *
    * `argv` is an array, never a shell string: the value becomes a process
    * invocation, and `$IN` is the only substitution.
@@ -190,8 +189,8 @@ export type HarnessManifest = {
   skipRunnerGen?: boolean;
   /**
    * Optional per-shell emission plugin (codex only today). It always writes
-   * into ctx.distRoot; under --check the packager supplies a temporary root and
-   * compares the complete generated tree with the committed distribution.
+   * into ctx.distRoot; under --check the packager invokes it in two independent
+   * temporary roots and compares the complete generated trees.
    */
   emit: ((ctx: EmitContext) => void) | null;
   /**

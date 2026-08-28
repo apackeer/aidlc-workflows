@@ -19,12 +19,14 @@
 //     (doctor consumes them) and for future scheduling; they do not
 //     gate runtime iteration today.
 //
-// Compile is the YAML -> JSON transform. It bootstraps number + name
-// from today's stage-graph.json so YAML stays the authored source of
-// truth for everything else while computed fields stay computed. Numbers
-// are ALWAYS assigned by the engine, never claimed by authors — a plugin's
-// authored `number:` is a relative-ordering hint among its own new stages,
-// its absolute value never used, so uncoordinated plugins cannot collide.
+// Compile is the YAML -> JSON transform. In an installed runtime it preserves
+// number + name from the existing stage-graph.json so composed plugin rows stay
+// pinned. A clean source package has no existing graph: core numbers derive
+// from requires_stage order, and display names come from authored `name:`
+// overrides or title-cased slugs. Numbers are ALWAYS assigned by the engine,
+// never claimed by authors — a plugin's authored `number:` is a
+// relative-ordering hint among its own new stages, its absolute value never
+// used, so uncoordinated plugins cannot collide.
 //
 // A NEW stage slug (a .md on disk with no row in stage-graph.json yet) is
 // seeded on compile rather than rejected: each phase's batch of new
@@ -33,14 +35,11 @@
 // then slug), then assigned next-free contiguous indices
 // (`<PHASES.indexOf(phase)>.<maxIndexInPhase + 1>` onward); name comes
 // from authored `name:`, defaulting to the title-cased slug. Both are
-// written into the regenerated JSON, so the FIRST compile assigns them
-// and every subsequent compile harvests the pinned values, the assignment
-// happens once and is stable thereafter. An author who wants a hand-tuned
-// display name edits that one JSON field after the seeding compile; the
-// next compile preserves it. Renumbering an existing stage is still an
-// explicit JSON edit. (Seeding only ever ADDS rows, it never renumbers a
-// stage that already has a row, so an in-flight workflow's slug-keyed
-// state is safe.)
+// written into the regenerated JSON. Installed compiles then preserve those
+// pinned rows. A core author who needs a hand-tuned display name writes `name:`
+// in stage frontmatter. (Seeding only ever ADDS rows, it never renumbers a
+// stage that already has a row, so an in-flight workflow's slug-keyed state is
+// safe.)
 //
 // See docs/reference/16-artifact-vocabulary.md for artifact naming.
 
@@ -1630,9 +1629,10 @@ export function selectionDroppedOrderingEdges(
   return dropped.sort();
 }
 
-/** Regenerate stage-graph.json from the 31 YAML stage files.
- *  Bootstraps number + name from the existing JSON (the "computed
- *  not authored" contract — see stage-definition.md). Asserts the
+/** Regenerate stage-graph.json from the YAML stage files.
+ *  Preserves pinned rows from an installed graph when present; a clean source
+ *  build derives core ordering and display names from stage frontmatter.
+ *  Asserts the
  *  edge-local invariant: every requires_stage edge points from a
  *  higher-numbered stage to a lower-numbered one. Also transposes each
  *  stage's `scopes:` into the compiled scope-grid.json (gridJson) — both
@@ -1647,10 +1647,13 @@ export function compileStageGraph(): {
   // as a single enabled freeform default, fail during compile.
   loadScopeMetadata();
 
-  // Harvest number + name mappings from existing JSON. A slug already in
-  // the JSON keeps its pinned number + name (the "computed not authored,
-  // stable thereafter" contract); a NEW slug is auto-seeded below.
-  const existing = loadStageGraphAll();
+  // Harvest number + name mappings from existing JSON. A slug already in the
+  // JSON keeps its pinned row; a NEW slug is auto-seeded below, with an
+  // authored name override when present.
+  // A source checkout has no compiled graph until packaging materializes one.
+  // Installed runtimes still preserve their pinned rows (including plugin
+  // stages), while a clean package build derives the core graph from YAML.
+  const existing = existsSync(stageGraphPath()) ? loadStageGraphAll() : [];
   const numberBySlug = new Map(existing.map((s) => [s.slug, s.number]));
   const nameBySlug = new Map(existing.map((s) => [s.slug, s.name]));
 

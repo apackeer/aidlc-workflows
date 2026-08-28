@@ -11,8 +11,8 @@
 // SKILL — EXCEPT harness/kiro-ide/skills/aidlc/SKILL.md, which was a stale fork
 // byte-identical to kiro CLI's SKILL at origin/v2 and never re-synced across the
 // 43-commit stack. It shipped GREEN because NO test reads a per-harness conductor
-// SKILL: `package.ts --check` only proves dist==authored, so a self-consistent-
-// but-stale authored SKILL passes. This gate closes that hole in BOTH directions:
+// SKILL: package determinism cannot detect a self-consistent but stale authored
+// SKILL. This gate closes that hole in BOTH directions:
 //   (a) NEGATIVE — the retired `/aidlc --init` command (a bare `--init` flag
 //       token; `git init`/`npm init` are NOT the aidlc command, same predicate as
 //       t174) must be ABSENT from every shipped conductor SKILL.
@@ -25,8 +25,8 @@
 // carries a bare `--init`, so the POSITIVE set needs no per-harness carve-out.
 // The gate asserts the shipped AUTHORED surface
 // (harness/<h>/skills/aidlc/SKILL.md), the FIRST surface that defines a
-// harness's orchestrator vocabulary; dist is its byte-parity-guarded copy
-// (t148/package.ts --check), so gating the authored source covers every tree.
+// harness's orchestrator vocabulary; dist is regenerated from that source, so
+// gating the authored source covers every tree.
 
 import { describe, expect, test } from "bun:test";
 import { existsSync, readFileSync } from "node:fs";

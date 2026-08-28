@@ -96,14 +96,14 @@ const manifest: HarnessManifest = {
     { src: "rules-aidlc.md", dst: "rules/aidlc.md" },
     { src: "settings.json", dst: "settings.json" },
     { src: "settings.local.json.example", dst: "settings.local.json.example" },
-    // Project-root install files (beside .claude/, not inside it). A user copies
-    // `dist/claude/` wholesale, so these ship at the dist root. Authored here
+    // Project-root install files (beside .claude/, not inside it). The
+    // copy-channel projection includes them at its root. Authored here
     // (not core/) because they are Claude-Code-specific: .mcp.json is the
     // Claude MCP-server registry (Kiro/Codex configure MCP differently and ship
     // none), and the .gitignore names `.claude/settings.local.json`. projectRoot
-    // routes them to dist/claude/<dst> and brings them under the --check drift
-    // guard (checkHarness diffs every projectRoot file). dot-gitignore is the
-    // authored name so it does not act as a live ignore inside harness/claude/.
+    // routes them to dist/claude/<dst> and brings them under the whole-tree
+    // determinism comparison. dot-gitignore is the authored name so it does not
+    // act as a live ignore inside harness/claude/.
     { src: ".mcp.json", dst: ".mcp.json", projectRoot: true },
     { src: "dot-gitignore", dst: ".gitignore", projectRoot: true },
   ],

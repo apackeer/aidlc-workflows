@@ -141,7 +141,7 @@ const manifest: HarnessManifest = {
     // runtime ignored, the shared work (memory/codekb/registry/state/audit shards/
     // artifacts) committed. Authored as dot-gitignore so it does not act as a live
     // ignore inside harness/kiro-ide/; projectRoot routes it to dist/kiro-ide/.gitignore
-    // + the --check drift guard. (Kiro IDE DOES support a promptSubmit seam (the
+    // + the --check determinism guard. (Kiro IDE DOES support a promptSubmit seam (the
     // human-turn mint hook) and a preToolUse seam (the exit-2 human-presence hard
     // block) - both spike-proven on the IDE; the latch lines describe what is wired,
     // not a platform limit.)

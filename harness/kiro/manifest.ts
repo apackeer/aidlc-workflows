@@ -105,7 +105,7 @@ const manifest: HarnessManifest = {
     // shards/artifacts) committed. Net-new for Kiro — it shipped none before.
     // Authored as dot-gitignore so it does not act as a live ignore inside
     // harness/kiro/. projectRoot routes it to dist/kiro/.gitignore + the --check
-    // drift guard.
+    // determinism guard.
     { src: "dot-gitignore", dst: ".gitignore", projectRoot: true },
   ],
 

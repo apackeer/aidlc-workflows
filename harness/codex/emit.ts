@@ -512,7 +512,7 @@ export default function emit(ctx: EmitContext): void {
 
   // Clean-sweep the emitted skills tree so a removed runner doesn't linger.
   // In --check mode distRoot is temporary; the packager compares its complete
-  // inventory with the committed distribution after emit returns.
+  // inventory with the independently generated counterpart after emit returns.
   rmSync(SKILLS_DST, { recursive: true, force: true });
   for (const { path, content } of emissions) {
     mkdirSync(dirname(path), { recursive: true });

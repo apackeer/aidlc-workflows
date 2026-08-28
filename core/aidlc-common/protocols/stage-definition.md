@@ -47,6 +47,7 @@ copies this table verbatim.
 | Field | Type | Required | Enum / Constraint |
 |-------|------|----------|--------------------|
 | `slug` | string | yes | kebab-case; must match filename stem |
+| `name` | string | optional | user-facing display-name override. Omit when title-casing the slug is correct; use for acronyms, conjunctions, or established punctuation |
 | `phase` | string | yes | `initialization` \| `ideation` \| `inception` \| `construction` \| `operation` (lowercase) |
 | `execution` | string | yes | `ALWAYS` \| `CONDITIONAL` |
 | `condition` | string | yes | free-form; describe always-on rationale for `ALWAYS`, branching condition for `CONDITIONAL` |
@@ -71,15 +72,16 @@ copies this table verbatim.
 
 ---
 
-## Computed fields (NOT authored)
+## Computed fields
 
-Two fields appear in `stage-graph.json` but are derived by the compile step,
-not authored in YAML.
+Numeric display order is derived by the compile step, not authored in YAML.
 
 | Field | Derivation |
 |-------|------------|
 | `display_order` | `<phase-prefix>.<sequence>`. Phase prefix: `initialization=0`, `ideation=1`, `inception=2`, `construction=3`, `operation=4`. Sequence: topological sort of `requires_stage` edges filtered to this phase, slug-alphabetical tiebreak for parallel stages |
-| `name` | Title-case of the slug (hyphens → spaces), or the H1 heading of the stage file |
+
+`name` defaults to title-casing the slug. Author an explicit `name:` only when
+that default would lose an acronym, conjunction, or established display label.
 
 ---
 

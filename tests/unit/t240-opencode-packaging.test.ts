@@ -1,11 +1,10 @@
-// t240-opencode-packaging: dist/opencode parity + drift guard + shell shape.
+// t240-opencode-packaging: dist/opencode determinism + shell shape.
 //
 // covers: file:tools/aidlc-lib.ts
 //
 // WHAT. Four contracts land here:
-//   (1) The committed dist/opencode tree is byte-identical to what
-//       `bun scripts/package.ts opencode` regenerates (drift guard, same UX
-//       as codex's t150 test 1).
+//   (1) `bun scripts/package.ts opencode --check` produces byte-identical
+//       clean builds (same UX as codex's t150 test 1).
 //   (2) Core parity: every .ts under dist/opencode/.aidlc/{tools,hooks}/ is
 //       BYTE-IDENTICAL to its dist/claude source (the architecture-B
 //       invariant: the packager may transform prose/data paths, never code).
@@ -75,18 +74,20 @@ function* walk(dir: string): Generator<string> {
 }
 
 describe("t240 dist/opencode packaging parity + shell shape", () => {
-  test("1: committed dist/opencode matches the packaging script (drift guard)", () => {
+  test("1: opencode package generation is deterministic", () => {
     const r = spawnSync("bun", [PACKAGE_SCRIPT, "opencode", "--check"], {
       encoding: "utf-8",
       cwd: REPO_ROOT,
     });
     if (r.status !== 0) {
-      // Surface the script's own stale-file list — it names the fix.
+      // Surface the script's path-level mismatch list.
       console.error(r.stderr);
     }
     expect(r.status).toBe(0);
-    expect(r.stdout).toContain("in sync");
-  });
+    expect(r.stdout).toContain(
+      "deterministic across two independent build(s) for opencode",
+    );
+  }, 60_000);
 
   test("2: packaged .ts files differ only at declared projection tokens", () => {
     const divergent: string[] = [];

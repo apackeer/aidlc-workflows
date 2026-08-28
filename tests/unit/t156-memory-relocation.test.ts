@@ -29,11 +29,11 @@
 //       here — unit tier stays zero-LLM).
 //   (3) THE ONE-COPY INVARIANT: exactly one HAND-EDITABLE rule copy exists
 //       (core/memory/), and no second hand-editable copy lives under a harness
-//       rule dir. The dist copies are GENERATED (drift-guarded by package.ts
-//       --check), not hand-editable, so they are excluded.
+//       rule dir. The dist copies are GENERATED, not hand-editable, so they are
+//       excluded.
 //
 // Mechanism: none for (1) (in-process pure-function call via the documented
-// env seam); file-inspection over the committed dist trees for (2)/(3). No LLM,
+// env seam); file-inspection over the generated dist trees for (2)/(3). No LLM,
 // no subprocess (the grep in (3) is a git ls over the repo). Zero tokens.
 
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";

@@ -84,7 +84,7 @@ const manifest: HarnessManifest = {
     // shards/artifacts) committed. Net-new for Codex — it shipped none before.
     // Authored as dot-gitignore so it does not act as a live ignore inside
     // harness/codex/. projectRoot routes it to dist/codex/.gitignore + the
-    // --check drift guard.
+    // --check determinism guard.
     { src: "dot-gitignore", dst: ".gitignore", projectRoot: true },
   ],
 

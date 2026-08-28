@@ -1,11 +1,10 @@
-// t275-cursor-packaging: dist/cursor parity + drift guard + shell shape.
+// t275-cursor-packaging: dist/cursor determinism + shell shape.
 //
 // covers: file:tools/aidlc-lib.ts, function:runnerFrontmatterAdditions
 //
 // WHAT. Five contracts land here:
-//   (1) The committed dist/cursor tree is byte-identical to what
-//       `bun scripts/package.ts cursor --check` verifies (drift guard, same
-//       UX as opencode's t240 test 1).
+//   (1) `bun scripts/package.ts cursor --check` produces byte-identical clean
+//       builds (same UX as opencode's t240 test 1).
 //   (2) Core parity: every .ts under dist/cursor/.cursor/{tools,hooks}/ is
 //       BYTE-IDENTICAL to its dist/claude source (the architecture-B
 //       invariant: the packager may transform prose/data paths, never code)
@@ -59,18 +58,20 @@ function* walk(dir: string): Generator<string> {
 }
 
 describe("t275 dist/cursor packaging parity + shell shape", () => {
-  test("1: committed dist/cursor matches the packaging script (drift guard)", () => {
+  test("1: cursor package generation is deterministic", () => {
     const r = spawnSync("bun", [PACKAGE_SCRIPT, "cursor", "--check"], {
       encoding: "utf-8",
       cwd: REPO_ROOT,
     });
     if (r.status !== 0) {
-      // Surface the script's own stale-file list - it names the fix.
+      // Surface the script's path-level mismatch list.
       console.error(r.stderr);
     }
     expect(r.status).toBe(0);
-    expect(r.stdout).toContain("in sync");
-  });
+    expect(r.stdout).toContain(
+      "deterministic across two independent build(s) for cursor",
+    );
+  }, 60_000);
 
   test("2: packaged .ts files differ only at declared projection tokens", () => {
     const divergent: string[] = [];
@@ -373,15 +374,18 @@ describe("t275 dist/cursor packaging parity + shell shape", () => {
   });
 
   test("12: Cursor install docs use the merge-aware installer", () => {
-    for (const file of [
-      join(REPO_ROOT, "README.md"),
+    const readme = readFileSync(join(REPO_ROOT, "README.md"), "utf-8");
+    expect(readme).toContain("aidlc config --harness cursor");
+    expect(readme).not.toContain("cp -R dist/cursor/.cursor");
+    expect(readme).not.toContain("cp dist/cursor/AGENTS.md");
+
+    const guide = readFileSync(
       join(REPO_ROOT, "docs", "guide", "harnesses", "cursor.md"),
-    ]) {
-      const raw = readFileSync(file, "utf-8");
-      expect(raw, file).toContain("bun dist/cursor/install.ts your-project");
-      expect(raw, file).not.toContain("cp -R dist/cursor/.cursor");
-      expect(raw, file).not.toContain("cp dist/cursor/AGENTS.md");
-    }
+      "utf-8",
+    );
+    expect(guide).toContain('bun "$RUNTIME_ROOT/cursor/install.ts" your-project');
+    expect(guide).not.toContain("cp -R dist/cursor/.cursor");
+    expect(guide).not.toContain("cp dist/cursor/AGENTS.md");
   });
 
   test("13: Cursor installer migrates only verified pre-receipt files", () => {

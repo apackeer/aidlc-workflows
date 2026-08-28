@@ -276,7 +276,7 @@ describe("t220 tier projection module", () => {
 // SHIPPED-BYTES pins for the non-Claude projection writers. t216 pins the
 // dist/claude .md output; package --check pins dist-vs-source parity but says
 // nothing about whether the projection itself is RIGHT. These read the
-// committed dist trees for one representative agent per tier and assert the
+// generated dist trees for one representative agent per tier and assert the
 // projected keys - so a writer bug (e.g. the Codex TOML emitting an effort
 // for a judgment agent) fails here even when the dist was faithfully
 // regenerated from the broken writer.
@@ -403,10 +403,10 @@ describe("t220 shipped projection bytes (codex TOML, kiro JSON + md)", () => {
     }
   });
 
-  test("AIDLC_TIER_CAP is IGNORED under --check (drift guard is env-independent)", () => {
+  test("AIDLC_TIER_CAP is IGNORED under --check (determinism guard is env-independent)", () => {
     // A stray env cap in a CI or test runner's environment must neither fail
-    // nor mask drift: --check compares what the committed dist was built
-    // from. The packager prints an ignore notice instead. (~10s: a real
+    // nor alter the clean builds. The packager prints an ignore notice instead.
+    // (~10s: a real
     // single-harness check run - the pin is the exit code, not the notice.)
     const r = Bun.spawnSync(
       ["bun", join(REPO_ROOT, "scripts", "package.ts"), "claude", "--check"],

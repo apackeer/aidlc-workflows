@@ -212,7 +212,7 @@ export default function emit(ctx: EmitContext): void {
 
   // Clean-sweep the shell so a removed persona/runner cannot linger. In
   // --check mode the packager supplies an isolated distRoot, then compares
-  // the complete generated tree with the committed distribution.
+  // the complete generated tree with the independently generated counterpart.
   rmSync(SHELL, { recursive: true, force: true });
   for (const { path, content } of emissions) {
     mkdirSync(dirname(path), { recursive: true });
