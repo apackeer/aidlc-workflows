@@ -1334,8 +1334,12 @@ describe("t244 Windows and completion release surfaces", () => {
     const workflow = readFileSync(RELEASE_WORKFLOW, "utf-8");
     const parsed = Bun.YAML.parse(workflow) as {
       permissions?: Record<string, string>;
+      jobs: Record<string, {
+        strategy?: { "fail-fast"?: boolean };
+      }>;
     };
     expect(parsed.permissions).toEqual({ contents: "read" });
+    expect(parsed.jobs["native-smoke"].strategy?.["fail-fast"]).toBe(false);
     expect(workflow).toContain("name: Authorize immutable release tag");
     expect(workflow).toContain("git merge-base --is-ancestor");
     expect(workflow).toContain(

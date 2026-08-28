@@ -26,6 +26,7 @@ import {
   readTarGz,
   type ArchiveEntry,
 } from "../../core/tools/aidlc-archive.ts";
+import { _installedSourcesForTests } from "../../core/tools/aidlc-init.ts";
 import { sha256Bytes, walkFiles } from "../../core/tools/aidlc-distribution.ts";
 import {
   machineTransactionRoot,
@@ -626,6 +627,38 @@ describe("t243 archive and transaction safety", () => {
 });
 
 describe("t243 project initialization", () => {
+  test("active-version runtime wins over an executable-adjacent path alias", () => {
+    const machine = temp("aidlc-t243-runtime-real-");
+    const aliasParent = temp("aidlc-t243-runtime-alias-");
+    const alias = join(aliasParent, "machine");
+    symlinkSync(machine, alias, process.platform === "win32" ? "junction" : "dir");
+    const runtime = join(machine, "versions", AIDLC_VERSION, "runtime");
+    mkdirSync(join(runtime, "claude"), { recursive: true });
+    writeFileSync(join(machine, "active-version"), `${AIDLC_VERSION}\n`);
+    const executable = join(
+      machine,
+      "versions",
+      AIDLC_VERSION,
+      process.platform === "win32" ? "aidlc.exe" : "aidlc",
+    );
+    writeFileSync(executable, "fixture\n");
+
+    const savedInstallRoot = process.env.AIDLC_INSTALL_ROOT;
+    const savedRuntimeRoot = process.env.AIDLC_RUNTIME_ROOT;
+    process.env.AIDLC_INSTALL_ROOT = alias;
+    delete process.env.AIDLC_RUNTIME_ROOT;
+    try {
+      expect(_installedSourcesForTests(undefined, executable)).toEqual([
+        join(alias, "versions", AIDLC_VERSION, "runtime", "claude"),
+      ]);
+    } finally {
+      if (savedInstallRoot === undefined) delete process.env.AIDLC_INSTALL_ROOT;
+      else process.env.AIDLC_INSTALL_ROOT = savedInstallRoot;
+      if (savedRuntimeRoot === undefined) delete process.env.AIDLC_RUNTIME_ROOT;
+      else process.env.AIDLC_RUNTIME_ROOT = savedRuntimeRoot;
+    }
+  });
+
   test("OpenCode metadata selects refresh source and refuses a different harness", () => {
     const project = temp("aidlc-t240-opencode-init-");
     mkdirSync(join(project, ".git"));

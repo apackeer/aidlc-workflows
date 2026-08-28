@@ -8,6 +8,7 @@ import {
   mkdtempSync,
   readFileSync,
   readdirSync,
+  realpathSync,
   rmSync,
   statSync,
   writeFileSync,
@@ -3499,14 +3500,41 @@ function mergeBlock(
   };
 }
 
-function installedSources(requiredVersion?: string): string[] {
+function addRuntimeDistributions(roots: string[], root: string): boolean {
+  if (!existsSync(root)) return false;
+  let added = false;
+  for (const entry of readdirSync(root).sort()) {
+    const candidate = join(root, entry);
+    if (!statSync(candidate).isDirectory()) continue;
+    roots.push(candidate);
+    added = true;
+  }
+  return added;
+}
+
+function dedupeSourceRoots(roots: readonly string[]): string[] {
+  const seen = new Set<string>();
+  return roots.filter((root) => {
+    let identity: string;
+    try {
+      identity = realpathSync(root);
+    } catch {
+      identity = resolve(root);
+    }
+    if (seen.has(identity)) return false;
+    seen.add(identity);
+    return true;
+  });
+}
+
+function installedSources(
+  requiredVersion?: string,
+  executablePath = process.execPath,
+): string[] {
   const roots: string[] = [];
   const explicit = process.env.AIDLC_RUNTIME_ROOT;
   if (explicit && existsSync(explicit)) {
-    for (const entry of readdirSync(explicit).sort()) {
-      const candidate = join(explicit, entry);
-      if (statSync(candidate).isDirectory()) roots.push(candidate);
-    }
+    addRuntimeDistributions(roots, explicit);
     try {
       projectionFiles(explicit);
       roots.push(explicit);
@@ -3514,33 +3542,37 @@ function installedSources(requiredVersion?: string): string[] {
       // The explicit root may be a parent of distributions.
     }
   }
+  let selectedVersionRuntimeFound = false;
   const active = activeVersion();
   if (active) {
-    const root = runtimeRoot(active);
-    if (existsSync(root)) {
-      for (const entry of readdirSync(root).sort()) {
-        const candidate = join(root, entry);
-        if (statSync(candidate).isDirectory()) roots.push(candidate);
-      }
+    const activeFound = addRuntimeDistributions(roots, runtimeRoot(active));
+    if (!requiredVersion || requiredVersion === active) {
+      selectedVersionRuntimeFound = activeFound;
     }
   }
   if (requiredVersion && requiredVersion !== active) {
-    const root = runtimeRoot(requiredVersion);
-    if (existsSync(root)) {
-      for (const entry of readdirSync(root).sort()) {
-        const candidate = join(root, entry);
-        if (statSync(candidate).isDirectory()) roots.push(candidate);
-      }
-    }
+    selectedVersionRuntimeFound = addRuntimeDistributions(
+      roots,
+      runtimeRoot(requiredVersion),
+    );
   }
-  const executableRuntime = join(dirname(process.execPath), "runtime");
-  if (existsSync(executableRuntime)) {
-    for (const entry of readdirSync(executableRuntime).sort()) {
-      const candidate = join(executableRuntime, entry);
-      if (statSync(candidate).isDirectory()) roots.push(candidate);
+  if (!selectedVersionRuntimeFound) {
+    let executable = executablePath;
+    try {
+      executable = realpathSync(executable);
+    } catch {
+      executable = resolve(executable);
     }
+    addRuntimeDistributions(roots, join(dirname(executable), "runtime"));
   }
-  return [...new Set(roots)];
+  return dedupeSourceRoots(roots);
+}
+
+export function _installedSourcesForTests(
+  requiredVersion?: string,
+  executablePath?: string,
+): string[] {
+  return installedSources(requiredVersion, executablePath);
 }
 
 function materializeSource(path: string): { root: string; cleanup?: string } {
