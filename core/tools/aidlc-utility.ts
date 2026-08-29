@@ -1645,26 +1645,26 @@ To get started:
     const earliest = directlyStale[0] ?? validity.issues[0]?.stage ?? null;
     if (validity.warnings.length > 0) {
       validityOutput =
-        "Validity:       Inspection partly unavailable — advisory; routing continues\n" +
+        "Validity:       Inspection partly unavailable - advisory; routing continues\n" +
         `Directly stale: ${directlyStale.join(", ") || "none"}\n` +
         `Revalidate:     ${needsRevalidation.join(", ") || "none"}\n` +
         `Untracked:      ${validity.untracked.join(", ") || "none"}\n` +
         `Warnings:       ${validity.warnings.join(" ")}\n`;
     } else if (validity.issues.length > 0) {
       validityOutput =
-        "Validity:       Drift detected — advisory; routing continues\n" +
+        "Validity:       Drift detected - advisory; routing continues\n" +
         `Directly stale: ${directlyStale.join(", ") || "none"}\n` +
         `Revalidate:     ${needsRevalidation.join(", ") || "none"}\n` +
         `Suggested redo: ${earliest ? `/aidlc --stage ${earliest}` : "none"}\n` +
         `Untracked:      ${validity.untracked.join(", ") || "none"}\n`;
     } else if (validity.untracked.length > 0) {
       validityOutput =
-        "Validity:       Untracked completions — advisory; routing continues\n" +
+        "Validity:       Untracked completions - advisory; routing continues\n" +
         `Untracked:      ${validity.untracked.join(", ")}\n`;
     }
   } catch (error) {
     validityOutput =
-      "Validity:       Inspection unavailable — advisory; routing continues\n" +
+      "Validity:       Inspection unavailable - advisory; routing continues\n" +
       `Warnings:       ${errorMessage(error)}\n`;
   }
 

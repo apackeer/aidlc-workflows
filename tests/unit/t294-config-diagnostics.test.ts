@@ -404,7 +404,7 @@ describe("t294 provider diagnostics", () => {
     expect(readFileSync(join(decline, "opencode.json"), "utf-8")).toBe(before);
 
     for (const [harness, dir, file] of [
-      ["kiro-ide", ".kiro", "settings/cli.json"],
+      ["kiro-ide", ".kiro", "tools/data/harness.json"],
       ["copilot", ".aidlc", "tools/data/harness.json"],
       ["cursor", ".cursor", "cli.json"],
     ] as const) {

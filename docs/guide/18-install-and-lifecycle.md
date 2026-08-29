@@ -326,9 +326,9 @@ run fails with usage guidance.
 Harnesses receive only settings they can read. Codex clamps `max` effort down
 to `xhigh`. opencode clamps `xhigh` down to `high`. Kiro CLI cannot express
 group effort dials, but a per-agent model exception can carry effort through
-`chat.modelDefaults`. Kiro IDE cannot express effort. Cursor and GitHub Copilot
-cannot portably pin agent models or effort, so the command records the policy
-and reports the unsupported fields instead of writing inert keys.
+`chat.modelDefaults`. Kiro IDE, Cursor, and GitHub Copilot cannot portably pin
+agent models or effort, so the command records the policy and reports the
+unsupported fields instead of writing inert keys.
 
 Model policy is agent-scoped. Stage files never carry model or effort keys;
 scopes continue to own stage criticality.

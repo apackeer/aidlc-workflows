@@ -249,9 +249,9 @@ describe("t293 model policy resolution", () => {
       schemaVersion: 1,
       agents: { architect: { model: "raw/model", effort: "high" } },
     }, "architect", "judgment", "kiro-ide");
-    expect(ide.model).toBe("raw/model");
+    expect(ide.model).toBeUndefined();
     expect(ide.effort).toBeUndefined();
-    expect(ide.unexpressed).toContain("effort");
+    expect(ide.unexpressed.sort()).toEqual(["effort", "model"]);
 
     const cursor = resolveModelPolicy({
       schemaVersion: 1,

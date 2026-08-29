@@ -137,11 +137,11 @@ export const HARNESS_HONESTY = Object.freeze({
       "Kiro CLI cannot express group effort dials today; a per-agent model exception can carry effort through chat.modelDefaults.",
   }),
   "kiro-ide": Object.freeze({
-    model: true,
+    model: false,
     effort: false,
     groupEffort: false,
     message:
-      "Kiro IDE cannot express effort policy; per-agent model exceptions can still land in agent JSON.",
+      "Kiro IDE cannot express model or effort policy; its md-only agent surfaces carry no model keys, so set the chat model in the IDE (the kiro-ide-chat-model pending action tracks it).",
   }),
   cursor: Object.freeze({
     model: false,
@@ -624,24 +624,22 @@ export function applyModelPolicyToProjection(
         }),
       );
     }
-  } else if (harness === "kiro" || harness === "kiro-ide") {
+  } else if (harness === "kiro") {
     const modelEfforts: Array<{ model: string; effort: KiroEffort }> = [];
     for (const item of effective) {
       const path = join(harnessRoot, "agents", `${modelAgentStem(item.agent)}.json`);
       if (!existsSync(path)) throw new Error(`${path}: missing agent surface`);
       writeFileSync(path, writeKiroAgentSurface(readFileSync(path, "utf-8"), item));
-      if (harness === "kiro" && item.model && item.effort) {
+      if (item.model && item.effort) {
         modelEfforts.push({ model: item.model, effort: item.effort });
       }
     }
-    if (harness === "kiro") {
-      const path = join(harnessRoot, "settings", "cli.json");
-      if (!existsSync(path)) throw new Error(`${path}: missing Kiro CLI settings`);
-      writeFileSync(
-        path,
-        writeKiroCliSurface(readFileSync(path, "utf-8"), modelEfforts, cap),
-      );
-    }
+    const path = join(harnessRoot, "settings", "cli.json");
+    if (!existsSync(path)) throw new Error(`${path}: missing Kiro CLI settings`);
+    writeFileSync(
+      path,
+      writeKiroCliSurface(readFileSync(path, "utf-8"), modelEfforts, cap),
+    );
   }
   return effective;
 }
@@ -731,12 +729,12 @@ export function modelPolicySurfaceDrift(
     } else if (harness === "opencode") {
       path = join(projectDir, ".opencode", "agents", `${modelAgentStem(name)}.md`);
       if (existsSync(path)) actual = markdownSurfaceValues(readFileSync(path, "utf-8"), "variant");
-    } else if (harness === "kiro" || harness === "kiro-ide") {
+    } else if (harness === "kiro") {
       path = join(harnessRoot, "agents", `${modelAgentStem(name)}.json`);
       if (existsSync(path)) {
         const parsed = JSON.parse(readFileSync(path, "utf-8")) as Record<string, unknown>;
         actual.model = typeof parsed.model === "string" ? parsed.model : undefined;
-        if (harness === "kiro" && surfaceExpected.model && surfaceExpected.effort) {
+        if (surfaceExpected.model && surfaceExpected.effort) {
           const cli = JSON.parse(
             readFileSync(join(harnessRoot, "settings", "cli.json"), "utf-8"),
           ) as Record<string, unknown>;
