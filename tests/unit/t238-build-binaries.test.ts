@@ -674,7 +674,9 @@ describe("t238 build-binaries release builder", () => {
 
       const delegateDoctorData = gate(native, "delegate-doctor-data");
       expect(delegateDoctorData.ok).toBe(false);
-      expect(delegateDoctorData.actual).toBe("/$bunfs/");
+      // The union crash-signature regex tries "ENOENT" at the same position
+      // where v2's narrower pattern first hit "/$bunfs/".
+      expect(delegateDoctorData.actual).toBe("ENOENT");
       expect(result.stderr).toContain("delegate-doctor-data gate failed");
     } finally {
       rmSync(root, { recursive: true, force: true });
