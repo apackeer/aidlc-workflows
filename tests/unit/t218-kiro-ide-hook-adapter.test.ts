@@ -1558,7 +1558,7 @@ describe("t218 Kiro IDE plan-approval enforcement", () => {
       };
       expect(registration.when?.type).toBe("promptSubmit");
       expect(registration.then?.command).toContain(
-        "aidlc-kiro-adapter.ts record-human-turn",
+        "engine adapter kiro-ide record-human-turn",
       );
       initGitWorkspace(dir);
       seedCodeGenerationDirective(dir);

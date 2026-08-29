@@ -262,11 +262,11 @@ describe("t150 dist/codex packaging determinism + trust", () => {
     expect(
       wiring.hooks.PostToolUse.find((group) => group.matcher === "request_user_input")
         ?.hooks[0]?.command,
-    ).toBe("bun .codex/hooks/aidlc-codex-adapter.ts record-human-turn");
+    ).toBe("bun .codex/tools/aidlc.ts engine adapter codex record-human-turn");
     expect(
       wiring.hooks.PreToolUse.find((group) => group.matcher === "Bash")
         ?.hooks[0]?.command,
-    ).toBe("bun .codex/hooks/aidlc-codex-adapter.ts bind-bash-session");
+    ).toBe("bun .codex/tools/aidlc.ts engine adapter codex bind-bash-session");
     // Every registration routes through the single authored adapter.
     for (const groups of Object.values(wiring.hooks)) {
       for (const g of groups) {

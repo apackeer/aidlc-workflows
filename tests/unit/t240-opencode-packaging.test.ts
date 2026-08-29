@@ -278,7 +278,7 @@ describe("t240 dist/opencode packaging parity + shell shape", () => {
           },
         },
       ),
-    ).rejects.toThrow(/stage status is changed by the workflow tools/i);
+    ).rejects.toThrow(/Stage status cannot be changed with aidlc-state\.ts approve/i);
   }, ADAPTER_ENTRYPOINT_TIMEOUT_MS);
 
   test("10: doctor accepts an opencode.jsonc-only install", () => {
