@@ -1786,8 +1786,18 @@ function delegateDoctorDataGate(artifact: string): GateResult {
     timeoutMs: 30_000,
   });
   const output = `${result.stdout}\n${result.stderr}`;
+  // Doctor legitimately reports PATH-dependent external tools as advisory rows,
+  // and the pathless gate env phrases those on Windows as
+  // "ENOENT: no such file or directory, uv_spawn 'git'". Those are not
+  // compiled-runtime crashes; only bun spawns (packaging bug: the binary
+  // shelled out to a dev bun) and data-file misses are. Scrub advisory
+  // external-spawn lines before matching, keeping uv_spawn 'bun' lines.
+  const scrubbed = output
+    .split("\n")
+    .filter((line) => !/uv_spawn ['"](?!bun['"])[^'"]+['"]/.test(line))
+    .join("\n");
   const crashSignature =
-    output.match(/Cannot find module|\/\$bunfs\/|ENOENT|uv_spawn ['"]bun['"]/)?.[0] ?? "";
+    scrubbed.match(/Cannot find module|\/\$bunfs\/|ENOENT|uv_spawn ['"]bun['"]/)?.[0] ?? "";
   const reportEmitted = result.stdout.includes("AI-DLC doctor");
   const schemaCount = /Schema validation: (\d+)\/(\d+) stages validated/.exec(result.stdout);
   const meaningfulSchemaCount =
