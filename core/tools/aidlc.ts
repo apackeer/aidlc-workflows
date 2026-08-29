@@ -850,6 +850,28 @@ export const ROUTES: readonly Route[] = [
     all: ["select [names]", "sync [--prune-missing] [--yes]", "list [--verbose] [--json]", "validate [path]", "build <harness> [outDir]"],
   },
   {
+    // The plugin AUTHORING surface (v2): `aidlc plugin validate` / `aidlc plugin
+    // build` run against a plugin checkout, which is usually NOT an installed
+    // project, so this route is public, unpinned, and carries no project
+    // requirement. The installed-plugin lifecycle (select/sync/list) stays on
+    // the engine `plugin` noun above.
+    id: "plugin-author",
+    group: "plugin",
+    kind: "noun-map",
+    classification: "translation",
+    verbs: ["validate", "build"],
+    tool: TOOLS.utility,
+    targets: { validate: "plugin-validate", build: "plugin-build" },
+    namespace: "public",
+    visibility: "hidden",
+    projectRequirement: "none",
+    pinPolicy: "active",
+    networkPolicy: "forbidden",
+    mutationScope: "none",
+    outputModes: ["human", "json"],
+    all: ["validate [path]", "build <harness> [outDir] [--plugin-root <path>]"],
+  },
+  {
     // The DocumentKB noun. Unlike `plugin`, the verb IS the subcommand -- these
     // verbs live in their own tool -- so there is no `targets` translation table
     // to keep in step. Only the verbs the tool actually implements are listed:
@@ -1571,7 +1593,7 @@ function resolveAlias(argv: string[], engineNamespace = false): Action | undefin
 function resolveTop(argv: string[]): Action | undefined {
   const verb = argv[0];
   for (const route of ROUTES.filter((item) =>
-    item.group === "top" && HUMAN_TOP_ROUTE_IDS.has(item.id)
+    item.group === "top" && item.namespace === "public"
   )) {
     if (!route.verbs.includes(verb)) continue;
 
@@ -1682,6 +1704,33 @@ function resolveSystem(argv: string[]): Action {
   return topLevelError(`system ${argv[0]}`);
 }
 
+// Public noun routes (the v2 team/authoring surface): `aidlc unit <verb>` and
+// `aidlc plugin <validate|build>` resolve at the top level without the engine
+// prefix. A head token whose verb does not match falls through to the public
+// unknown-command error rather than a noun error, so `aidlc plugin list`
+// remains "unknown command 'plugin'" (that engine surface is `aidlc engine
+// plugin list`).
+function resolvePublicNoun(argv: string[]): Action | undefined {
+  const noun = argv[0];
+  const verb = argv[1];
+  for (const route of ROUTES.filter((item) =>
+    item.namespace === "public" && item.group !== "top" && item.group === noun
+  )) {
+    if (!verb || !route.verbs.includes(verb)) continue;
+    if (route.kind === "noun-passthrough" && route.tool) {
+      return {
+        type: "delegate",
+        tool: route.tool,
+        args: [...(route.prefix ?? []), verb, ...argv.slice(2)],
+      };
+    }
+    if (route.kind === "noun-map" && route.tool && route.targets) {
+      return { type: "delegate", tool: route.tool, args: [route.targets[verb], ...argv.slice(2)] };
+    }
+  }
+  return undefined;
+}
+
 function resolveActionWithoutGlobalFlags(argv: string[]): Action {
   if (argv.length === 0 || argv[0] === "--help" || argv[0] === "-h") {
     return { type: "help", scope: "human" };
@@ -1700,6 +1749,9 @@ function resolveActionWithoutGlobalFlags(argv: string[]): Action {
 
   const top = resolveTop(argv);
   if (top) return top;
+
+  const publicNoun = resolvePublicNoun(argv);
+  if (publicNoun) return publicNoun;
 
   return publicCommandError(argv[0]);
 }
@@ -2218,6 +2270,13 @@ export function routePolicyFor(argv: readonly string[]): Route | null {
     route.verbs.includes(head)
   );
   if (top) return top;
+  const publicNoun = ROUTES.find((route) =>
+    route.namespace === "public" &&
+    route.group !== "top" &&
+    route.group === head &&
+    route.verbs.includes(clean[1] ?? "")
+  );
+  if (publicNoun) return publicNoun;
   return null;
 }
 

@@ -650,7 +650,7 @@ describe("t230 version-aware startup", () => {
     for (const route of ROUTES) {
       const verb = route.verbs[0]?.split(/\s+/)[0] ?? "";
       const argv = route.namespace === "public"
-        ? [verb]
+        ? (route.group === "top" ? [verb] : [route.group, verb])
         : route.group === "top"
         ? [route.namespace, verb]
         : [route.namespace, route.group, verb];

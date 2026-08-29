@@ -44,6 +44,8 @@ export const PINNED_TOP_LEVEL_ROUTES = [
   "continue",
   "report",
   "park",
+  "team-board",
+  "unit",
   "compose",
   "--status",
   "--resume",
