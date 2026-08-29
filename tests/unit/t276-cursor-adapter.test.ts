@@ -1210,8 +1210,6 @@ if (import.meta.main) {
     registerTaskParent(proj);
     runAdapter(proj, "guards", payload("preToolUseTask", proj));
     expect(ledgerFilesFor(proj)).toHaveLength(1);
-    const shellPath = (path: string): string => path.replaceAll("\\", "/");
-
     for (const target of [ledgerDirFor(proj), dispatch]) {
       const removal = runAdapter(
         proj,
