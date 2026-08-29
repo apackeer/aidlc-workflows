@@ -11001,7 +11001,12 @@ function readSyncBufferedLine(
         ? Buffer.from(chunks[0])
         : Buffer.concat(chunks, total);
     }
-    const chunk = reader.buffer.subarray(reader.offset, reader.end);
+    // COPY the partial chunk: the next loop iteration refills reader.buffer in
+    // place, and a subarray view kept across that refill would silently show
+    // the refilled bytes. That corrupted any line spanning the 64 KiB refill
+    // boundary (content-layout dependent, so it escaped until a payload
+    // shifted a cat-file header onto the boundary).
+    const chunk = Buffer.from(reader.buffer.subarray(reader.offset, reader.end));
     chunks.push(chunk);
     total += chunk.length;
     reader.offset = reader.end;
