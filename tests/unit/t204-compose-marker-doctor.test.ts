@@ -145,10 +145,10 @@ describe("t204 doctor transient-marker probes", () => {
     expect(out).toContain("Background-subagent ledger present");
     expect(out).toContain("aidlc/.aidlc-subagent-inflight");
     expect(out).toMatch(
-      /\u2713\s+Background-subagent ledger present \(.*1 fresh, 0 stale/,
+      /ok\s+Background-subagent ledger present \(.*1 fresh, 0 stale/,
     );
     expect(out).not.toMatch(
-      /\u2717\s+Background-subagent ledger present/,
+      /fail\s+Background-subagent ledger present/,
     );
     expect(existsSync(marker)).toBe(true);
   });
@@ -161,7 +161,7 @@ describe("t204 doctor transient-marker probes", () => {
     );
     const { out, status } = runDoctor(proj);
     expect(out).toMatch(
-      /\u2717\s+Background-subagent ledger present \(.*0 fresh, 1 stale/,
+      /fail\s+Background-subagent ledger present \(.*0 fresh, 1 stale/,
     );
     expect(out).toContain("rm aidlc/.aidlc-subagent-inflight");
     expect(status).toBe(1);

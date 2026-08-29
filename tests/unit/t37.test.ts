@@ -545,7 +545,7 @@ describe("t37 aidlc-utility doctor — graph-level checks", () => {
     // audit-sample.md intentionally has no STAGE_STARTED.
     mkdirSync(hooksHealthDir(p), { recursive: true });
     const r = doctor(p);
-    expect(r.out).toContain("✓  Hook heartbeats: not yet fired");
+    expect(r.out).toContain("ok    Hook heartbeats: not yet fired");
     expect(r.status).toBe(0);
   });
 
@@ -557,7 +557,7 @@ describe("t37 aidlc-utility doctor — graph-level checks", () => {
     appendStageStartedAudit(p);
     mkdirSync(hooksHealthDir(p), { recursive: true });
     const r = doctor(p);
-    expect(r.out).toContain("✗  Hook heartbeat data");
+    expect(r.out).toContain("fail  Hook heartbeat data");
     expect(r.out).toContain(
       "health dir exists and the ledger shows STAGE_STARTED, but no hook has ever fired",
     );
@@ -573,7 +573,7 @@ describe("t37 aidlc-utility doctor — graph-level checks", () => {
     mkdirSync(beforeHealthDir, { recursive: true });
     writeFileSync(join(beforeHealthDir, "hook-debug.log"), "debug enabled\n", "utf-8");
     const beforeResult = doctor(before);
-    expect(beforeResult.out).toContain("✓  Hook heartbeats: not yet fired");
+    expect(beforeResult.out).toContain("ok    Hook heartbeats: not yet fired");
     expect(beforeResult.status).toBe(0);
 
     const after = track(setupIntegrationProject({
@@ -585,7 +585,7 @@ describe("t37 aidlc-utility doctor — graph-level checks", () => {
     mkdirSync(afterHealthDir, { recursive: true });
     writeFileSync(join(afterHealthDir, "hook-debug.log"), "debug enabled\n", "utf-8");
     const afterResult = doctor(after);
-    expect(afterResult.out).toContain("✗  Hook heartbeat data");
+    expect(afterResult.out).toContain("fail  Hook heartbeat data");
     expect(afterResult.status).toBe(1);
   });
 
@@ -604,7 +604,7 @@ describe("t37 aidlc-utility doctor — graph-level checks", () => {
     );
     const r = doctor(p);
     expect(r.out).toContain(
-      "✓  Hooks last fired: continue-workflow 2026-05-03T00:01:00Z",
+      "ok    Hooks last fired: continue-workflow 2026-05-03T00:01:00Z",
     );
     expect(r.status).toBe(0);
   });
